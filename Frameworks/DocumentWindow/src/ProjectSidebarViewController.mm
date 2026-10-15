@@ -266,7 +266,7 @@ static NSURL* ProjectSidebarUniqueURL (NSURL* directory, NSString* baseName, NSS
 	self.outlineView.target = self;
 	self.outlineView.action = @selector(outlineClicked:);
 	self.outlineView.menu = [self contextMenu];
-	[self.outlineView registerForDraggedTypes:@[ ProjectSidebarDragType ]];
+	[self.outlineView registerForDraggedTypes:@[ ProjectSidebarDragType, NSPasteboardTypeFileURL ]];
 	[self.outlineView setDraggingSourceOperationMask:NSDragOperationMove forLocal:YES];
 
 	NSTableColumn* column = [[NSTableColumn alloc] initWithIdentifier:@"name"];
@@ -285,7 +285,7 @@ static NSURL* ProjectSidebarUniqueURL (NSURL* directory, NSString* baseName, NSS
 	self.emptyLabel.textColor = NSColor.secondaryLabelColor;
 
 	title.translatesAutoresizingMaskIntoConstraints = NO;
-	OakAddAutoLayoutViewsToSuperview(@[ header, separator, scrollView, self.emptyLabel ], background);
+	OakAddAutoLayoutViewsToSuperview(@[ header, separator, self.emptyLabel, scrollView ], background);
 	[header addSubview:title];
 	[header addSubview:addButton];
 	[header addSubview:newFolderButton];
@@ -1283,8 +1283,205 @@ static NSURL* ProjectSidebarUniqueURL (NSURL* directory, NSString* baseName, NSS
 	return YES;
 }
 
+- (NSArray<NSURL*>*)externalFileURLsFromDraggingInfo:(id<NSDraggingInfo>)info
+{
+	if([[info.draggingPasteboard types] containsObject:ProjectSidebarDragType])
+		return @[];
+
+	NSMutableArray<NSURL*>* urls = [NSMutableArray array];
+	NSArray<NSURL*>* found = [info.draggingPasteboard readObjectsForClasses:@[ NSURL.class ] options:@{ NSPasteboardURLReadingFileURLsOnlyKey: @YES }];
+	for(NSURL* url in found)
+	{
+		if(url.isFileURL && url.path.length)
+			[urls addObject:url];
+	}
+	return urls;
+}
+
+- (BOOL)path:(NSString*)path isInsideOrEqualTo:(NSString*)ancestor
+{
+	path = path.stringByStandardizingPath;
+	ancestor = ancestor.stringByStandardizingPath;
+	if(path.length == 0 || ancestor.length == 0)
+		return NO;
+	if([path isEqualToString:ancestor])
+		return YES;
+	NSString* prefix = [ancestor hasSuffix:@"/"] ? ancestor : [ancestor stringByAppendingString:@"/"];
+	return [path hasPrefix:prefix];
+}
+
+- (BOOL)externalDropShouldCopy:(id<NSDraggingInfo>)info
+{
+	NSDragOperation mask = info.draggingSourceOperationMask;
+	return (mask & NSDragOperationCopy) != 0 && (mask & NSDragOperationMove) == 0;
+}
+
+- (ProjectSidebarNode*)externalDropFolderForPoint:(NSPoint)point
+{
+	NSInteger row = [self.outlineView rowAtPoint:point];
+	if(row < 0)
+		return nil;
+	return [self folderForDropOnNode:[self.outlineView itemAtRow:row]];
+}
+
+- (BOOL)addExternalFileURLs:(NSArray<NSURL*>*)urls atIndex:(NSInteger)index
+{
+	NSMutableArray<NSString*>* paths = [ProjectSidebarFolderPaths() mutableCopy];
+	NSMutableArray<NSString*>* added = [NSMutableArray array];
+	NSInteger insert = MAX(0, MIN(index, (NSInteger)paths.count));
+	for(NSURL* url in urls)
+	{
+		NSString* path = url.path.stringByStandardizingPath;
+		if(path.length == 0)
+			continue;
+		NSUInteger existing = [paths indexOfObject:path];
+		if(existing != NSNotFound)
+		{
+			[paths removeObjectAtIndex:existing];
+			if((NSInteger)existing < insert)
+				--insert;
+		}
+		insert = MAX(0, MIN(insert, (NSInteger)paths.count));
+		[paths insertObject:path atIndex:insert++];
+		[added addObject:path];
+	}
+	if(added.count == 0)
+		return NO;
+
+	NSMutableArray<NSString*>* expand = [NSMutableArray array];
+	for(NSString* path in added)
+	{
+		BOOL isDirectory = NO;
+		if([NSFileManager.defaultManager fileExistsAtPath:path isDirectory:&isDirectory] && isDirectory)
+			[expand addObject:path];
+	}
+	self.pendingExpand = expand;
+	self.pendingSelectPath = added.lastObject;
+	if(![paths isEqualToArray:ProjectSidebarFolderPaths()])
+		ProjectSidebarSetFolderPaths(paths);
+
+	for(NSString* path in added)
+	{
+		BOOL isDirectory = NO;
+		if([NSFileManager.defaultManager fileExistsAtPath:path isDirectory:&isDirectory] && !isDirectory)
+			[self.delegate projectSidebar:self openURL:[NSURL fileURLWithPath:path]];
+	}
+	return YES;
+}
+
+- (BOOL)receiveExternalFileURLs:(NSArray<NSURL*>*)urls inFolder:(ProjectSidebarNode*)folder copy:(BOOL)copy
+{
+	if(!folder.directory || folder.missing || urls.count == 0)
+		return NO;
+
+	NSString* destinationDir = folder.url.path.stringByStandardizingPath;
+	NSMutableArray<NSString*>* roots = [ProjectSidebarFolderPaths() mutableCopy];
+	NSMutableArray<NSURL*>* filesToOpen = [NSMutableArray array];
+	NSString* lastPath = nil;
+	NSFileManager* fileManager = NSFileManager.defaultManager;
+	for(NSURL* source in urls)
+	{
+		NSString* sourcePath = source.path.stringByStandardizingPath;
+		BOOL isDirectory = NO;
+		if(sourcePath.length == 0 || ![fileManager fileExistsAtPath:sourcePath isDirectory:&isDirectory])
+			continue;
+		if([destinationDir isEqualToString:sourcePath] || [self path:destinationDir isInsideOrEqualTo:sourcePath])
+			continue;
+		if([sourcePath.stringByDeletingLastPathComponent isEqualToString:destinationDir])
+		{
+			lastPath = sourcePath;
+			if(!isDirectory)
+				[filesToOpen addObject:[NSURL fileURLWithPath:sourcePath]];
+			continue;
+		}
+
+		NSURL* destination = [NSURL fileURLWithPath:[destinationDir stringByAppendingPathComponent:sourcePath.lastPathComponent]];
+		if([fileManager fileExistsAtPath:destination.path])
+		{
+			NSError* error = [NSError errorWithDomain:NSCocoaErrorDomain code:NSFileWriteFileExistsError userInfo:@{
+				NSLocalizedDescriptionKey: [NSString stringWithFormat:@"“%@” already exists in that folder.", destination.lastPathComponent],
+			}];
+			[self.view.window presentError:error];
+			continue;
+		}
+
+		BOOL copyItem = copy;
+		if(!copyItem)
+		{
+			id sourceVolume = nil;
+			id destinationVolume = nil;
+			[source getResourceValue:&sourceVolume forKey:NSURLVolumeIdentifierKey error:nil];
+			[[NSURL fileURLWithPath:destinationDir isDirectory:YES] getResourceValue:&destinationVolume forKey:NSURLVolumeIdentifierKey error:nil];
+			if(sourceVolume && destinationVolume && ![sourceVolume isEqual:destinationVolume])
+				copyItem = YES;
+		}
+
+		NSError* error = nil;
+		BOOL ok = copyItem ? [fileManager copyItemAtURL:source toURL:destination error:&error] : [fileManager moveItemAtURL:source toURL:destination error:&error];
+		if(!ok)
+		{
+			if(error)
+				[self.view.window presentError:error];
+			continue;
+		}
+
+		NSString* placed = destination.path.stringByStandardizingPath;
+		if(!copyItem)
+		{
+			if([self.delegate respondsToSelector:@selector(projectSidebar:didMoveURL:toURL:)])
+				[self.delegate projectSidebar:self didMoveURL:[NSURL fileURLWithPath:sourcePath] toURL:destination];
+			NSUInteger index = [roots indexOfObject:sourcePath];
+			if(index != NSNotFound)
+				[roots removeObjectAtIndex:index];
+		}
+		lastPath = placed;
+		if(!isDirectory)
+			[filesToOpen addObject:[NSURL fileURLWithPath:placed]];
+	}
+	if(!lastPath)
+		return NO;
+
+	self.pendingExpand = @[ destinationDir ];
+	self.pendingSelectPath = lastPath;
+	if(![roots isEqualToArray:ProjectSidebarFolderPaths()])
+		ProjectSidebarSetFolderPaths(roots);
+	else
+	{
+		folder.children = nil;
+		[self.outlineView reloadItem:folder reloadChildren:YES];
+		[self.outlineView expandItem:folder];
+		[self revealPath:lastPath];
+	}
+	for(NSURL* url in filesToOpen)
+		[self.delegate projectSidebar:self openURL:url];
+	return YES;
+}
+
 - (NSDragOperation)outlineView:(NSOutlineView*)outlineView validateDrop:(id<NSDraggingInfo>)info proposedItem:(id)item proposedChildIndex:(NSInteger)index
 {
+	NSArray<NSURL*>* external = [self externalFileURLsFromDraggingInfo:info];
+	if(external.count)
+	{
+		NSPoint point = [outlineView convertPoint:info.draggingLocation fromView:nil];
+		ProjectSidebarNode* folder = [self externalDropFolderForPoint:point];
+		if(folder)
+		{
+			for(NSURL* url in external)
+			{
+				if([self path:folder.url.path isInsideOrEqualTo:url.path])
+					return NSDragOperationNone;
+			}
+			if(item != folder || index != NSOutlineViewDropOnItemIndex)
+				[outlineView setDropItem:folder dropChildIndex:NSOutlineViewDropOnItemIndex];
+			return [self externalDropShouldCopy:info] ? NSDragOperationCopy : NSDragOperationMove;
+		}
+
+		NSInteger insertion = [self rootInsertionIndexForPoint:point];
+		if(item != nil || index != insertion)
+			[outlineView setDropItem:nil dropChildIndex:insertion];
+		return NSDragOperationCopy;
+	}
+
 	if(![[info.draggingPasteboard types] containsObject:ProjectSidebarDragType])
 		return NSDragOperationNone;
 
@@ -1317,6 +1514,14 @@ static NSURL* ProjectSidebarUniqueURL (NSURL* directory, NSString* baseName, NSS
 
 - (BOOL)outlineView:(NSOutlineView*)outlineView acceptDrop:(id<NSDraggingInfo>)info item:(id)item childIndex:(NSInteger)index
 {
+	NSArray<NSURL*>* external = [self externalFileURLsFromDraggingInfo:info];
+	if(external.count)
+	{
+		if([item isKindOfClass:ProjectSidebarNode.class] && ((ProjectSidebarNode*)item).directory && index == NSOutlineViewDropOnItemIndex)
+			return [self receiveExternalFileURLs:external inFolder:item copy:[self externalDropShouldCopy:info]];
+		return [self addExternalFileURLs:external atIndex:index];
+	}
+
 	NSArray<NSString*>* moving = [self pathsFromDraggingInfo:info];
 	if(moving.count == 0)
 		return NO;
