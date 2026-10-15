@@ -9,5 +9,6 @@
 @interface ProjectSidebarViewController : NSViewController
 @property (nonatomic, weak) id <ProjectSidebarDelegate> delegate;
 - (void)reloadContents;
+- (void)revealPath:(NSString*)path;
 - (void)setContentTopInset:(CGFloat)inset;
 @end

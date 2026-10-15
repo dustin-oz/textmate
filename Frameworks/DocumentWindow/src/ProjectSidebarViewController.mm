@@ -243,6 +243,105 @@ static BOOL ProjectSidebarShouldSkipDirectory (NSString* name)
 	[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(foldersDidChange:) name:ProjectSidebarFoldersDidChangeNotification object:nil];
 }
 
+- (ProjectSidebarNode*)rootContainingPath:(NSString*)path
+{
+	ProjectSidebarNode* best = nil;
+	NSUInteger bestLength = 0;
+	for(ProjectSidebarNode* root in self.roots)
+	{
+		NSString* rootPath = root.url.path.stringByStandardizingPath;
+		BOOL contains = [path isEqualToString:rootPath];
+		if(!contains)
+		{
+			NSString* prefix = [rootPath hasSuffix:@"/"] ? rootPath : [rootPath stringByAppendingString:@"/"];
+			contains = [path hasPrefix:prefix];
+		}
+		if(contains && rootPath.length >= bestLength)
+		{
+			best = root;
+			bestLength = rootPath.length;
+		}
+	}
+	return best;
+}
+
+- (ProjectSidebarNode*)childOfNode:(ProjectSidebarNode*)node named:(NSString*)name
+{
+	ProjectSidebarNode* fallback = nil;
+	for(ProjectSidebarNode* child in [self loadChildrenOfNode:node])
+	{
+		NSString* component = child.url.lastPathComponent;
+		if([component isEqualToString:name])
+			return child;
+		if(!fallback && [component caseInsensitiveCompare:name] == NSOrderedSame)
+			fallback = child;
+	}
+	return fallback;
+}
+
+- (void)scrollRowToCenterIfNeeded:(NSInteger)row
+{
+	if(row < 0 || row >= self.outlineView.numberOfRows)
+		return;
+
+	NSRect rowRect = [self.outlineView rectOfRow:row];
+	if(NSContainsRect(self.outlineView.visibleRect, rowRect))
+		return;
+
+	NSScrollView* scrollView = self.outlineView.enclosingScrollView;
+	NSClipView* clip = scrollView.contentView;
+	CGFloat height = NSHeight(clip.bounds);
+	CGFloat maxY = MAX(0, NSHeight(self.outlineView.frame) - height);
+	CGFloat y = MIN(MAX(0, NSMidY(rowRect) - height / 2.0), maxY);
+	[clip scrollToPoint:NSMakePoint(NSMinX(clip.bounds), y)];
+	[scrollView reflectScrolledClipView:clip];
+}
+
+- (void)revealPath:(NSString*)path
+{
+	path = path.stringByStandardizingPath;
+	if(path.length == 0)
+		return;
+
+	ProjectSidebarNode* root = [self rootContainingPath:path];
+	if(!root)
+		return;
+
+	NSString* rootPath = root.url.path.stringByStandardizingPath;
+	NSMutableArray<ProjectSidebarNode*>* chain = [NSMutableArray arrayWithObject:root];
+	if(![path isEqualToString:rootPath])
+	{
+		NSString* relative = [path substringFromIndex:rootPath.length];
+		ProjectSidebarNode* node = root;
+		for(NSString* part in relative.pathComponents)
+		{
+			if(part.length == 0 || [part isEqualToString:@"/"])
+				continue;
+			ProjectSidebarNode* child = [self childOfNode:node named:part];
+			if(!child)
+				return;
+			[chain addObject:child];
+			node = child;
+		}
+	}
+
+	self.suppressOpen = YES;
+	for(ProjectSidebarNode* node in chain)
+	{
+		if(node.directory)
+			[self.outlineView expandItem:node];
+	}
+	ProjectSidebarNode* target = chain.lastObject;
+	NSInteger row = [self.outlineView rowForItem:target];
+	if(row >= 0)
+		[self.outlineView selectRowIndexes:[NSIndexSet indexSetWithIndex:row] byExtendingSelection:NO];
+	self.suppressOpen = NO;
+
+	dispatch_async(dispatch_get_main_queue(), ^{
+		[self scrollRowToCenterIfNeeded:[self.outlineView rowForItem:target]];
+	});
+}
+
 - (void)setContentTopInset:(CGFloat)inset
 {
 	if(fabs(self.contentTopConstraint.constant - inset) < 0.5)

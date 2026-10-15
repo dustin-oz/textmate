@@ -6,6 +6,7 @@ Added 2026-10-15. A left-hand column on every document window for folders you wa
 - Drag a top-level project up or down to change its place in the list. A gap shows the new spot. The drag never moves a project inside another project, and folders inside a project cannot be reordered. The order is saved in user defaults (`projectSidebarFolders`) and shared by every window.
 - The tree shows folders plus files TextMate can open as text (Markdown, HTML, source, and other text types). Hidden files, images, and other binaries stay out. `node_modules` and `Pods` are skipped so the list stays usable.
 - Click a file to open it in the current window. Option-click replaces the other tabs, same as the existing file browser.
+- Switching to a tab expands the sidebar to that file and selects it. If the row is off screen, it scrolls to the middle of the list. A file that is not in the sidebar is left alone.
 - Drag the sidebar’s right edge to resize it.
 
 The older File Browser (the Finder-style one) is unchanged.
