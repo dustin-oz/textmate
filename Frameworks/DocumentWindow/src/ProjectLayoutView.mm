@@ -5,12 +5,15 @@
 #import <oak/misc.h>
 #import <oak/debug.h>
 
+NSString* const kUserDefaultsProjectSidebarWidthKey = @"projectSidebarWidth";
 NSString* const kUserDefaultsFileBrowserWidthKey = @"fileBrowserWidth";
 NSString* const kUserDefaultsHTMLOutputSizeKey   = @"htmlOutputSize";
 
 @interface ProjectLayoutView () <OakUserDefaultsObserver>
+@property (nonatomic) NSView* projectSidebarDivider;
 @property (nonatomic) NSView* fileBrowserDivider;
 @property (nonatomic) NSView* htmlOutputDivider;
+@property (nonatomic) NSLayoutConstraint* projectSidebarWidthConstraint;
 @property (nonatomic) NSLayoutConstraint* fileBrowserWidthConstraint;
 @property (nonatomic) NSLayoutConstraint* htmlOutputSizeConstraint;
 @property (nonatomic) NSMutableArray* myConstraints;
@@ -21,6 +24,7 @@ NSString* const kUserDefaultsHTMLOutputSizeKey   = @"htmlOutputSize";
 + (void)initialize
 {
 	[NSUserDefaults.standardUserDefaults registerDefaults:@{
+		kUserDefaultsProjectSidebarWidthKey: @240,
 		kUserDefaultsFileBrowserWidthKey: @250,
 		kUserDefaultsHTMLOutputSizeKey:   NSStringFromSize(NSMakeSize(200, 200))
 	}];
@@ -31,6 +35,7 @@ NSString* const kUserDefaultsHTMLOutputSizeKey   = @"htmlOutputSize";
 	if(self = [super initWithFrame:aRect])
 	{
 		_myConstraints    = [NSMutableArray array];
+		_projectSidebarWidth = [NSUserDefaults.standardUserDefaults integerForKey:kUserDefaultsProjectSidebarWidthKey];
 		_fileBrowserWidth = [NSUserDefaults.standardUserDefaults integerForKey:kUserDefaultsFileBrowserWidthKey];
 		_htmlOutputSize   = NSSizeFromString([NSUserDefaults.standardUserDefaults stringForKey:kUserDefaultsHTMLOutputSizeKey]);
 
@@ -66,7 +71,7 @@ NSString* const kUserDefaultsHTMLOutputSizeKey   = @"htmlOutputSize";
 - (void)updateKeyViewLoop
 {
 	NSMutableArray<NSView*>* views = [NSMutableArray array];
-	for(NSView* view : { _documentView, _htmlOutputView, _fileBrowserView })
+	for(NSView* view : { _projectSidebarView, _documentView, _htmlOutputView, _fileBrowserView })
 	{
 		if(view)
 			[views addObject:view];
@@ -89,6 +94,13 @@ NSString* const kUserDefaultsHTMLOutputSizeKey   = @"htmlOutputSize";
 {
 	_htmlOutputDivider = [self replaceView:_htmlOutputDivider withView:(aHtmlOutputView ? [self createDividerAlongYAxis:_htmlOutputOnRight] : nil)];
 	_htmlOutputView    = [self replaceView:_htmlOutputView withView:aHtmlOutputView];
+	[self updateKeyViewLoop];
+}
+
+- (void)setProjectSidebarView:(NSView*)aProjectSidebarView
+{
+	_projectSidebarDivider = [self replaceView:_projectSidebarDivider withView:aProjectSidebarView ? [self createDividerAlongYAxis:YES] : nil];
+	_projectSidebarView    = [self replaceView:_projectSidebarView withView:aProjectSidebarView];
 	[self updateKeyViewLoop];
 }
 
@@ -129,11 +141,13 @@ NSString* const kUserDefaultsHTMLOutputSizeKey   = @"htmlOutputSize";
 	[super updateConstraints];
 
 	NSDictionary* views = @{
-		@"documentView":       _documentView,
-		@"fileBrowserView":    _fileBrowserView    ?: [NSNull null],
-		@"fileBrowserDivider": _fileBrowserDivider ?: [NSNull null],
-		@"htmlOutputView":     _htmlOutputView     ?: [NSNull null],
-		@"htmlOutputDivider":  _htmlOutputDivider  ?: [NSNull null],
+		@"documentView":          _documentView,
+		@"projectSidebarView":    _projectSidebarView    ?: [NSNull null],
+		@"projectSidebarDivider": _projectSidebarDivider ?: [NSNull null],
+		@"fileBrowserView":       _fileBrowserView       ?: [NSNull null],
+		@"fileBrowserDivider":    _fileBrowserDivider    ?: [NSNull null],
+		@"htmlOutputView":        _htmlOutputView        ?: [NSNull null],
+		@"htmlOutputDivider":     _htmlOutputDivider     ?: [NSNull null],
 	};
 
 	// ========================
@@ -152,6 +166,8 @@ NSString* const kUserDefaultsHTMLOutputSizeKey   = @"htmlOutputSize";
 	// left
 	if(_fileBrowserView && !_fileBrowserOnRight)
 		CONSTRAINT(@"H:[fileBrowserDivider][documentView]", 0);
+	else if(_projectSidebarView)
+		CONSTRAINT(@"H:[projectSidebarDivider][documentView]", 0);
 	else
 		CONSTRAINT(@"H:|[documentView]", 0);
 
@@ -162,6 +178,21 @@ NSString* const kUserDefaultsHTMLOutputSizeKey   = @"htmlOutputSize";
 		CONSTRAINT(@"H:[documentView][fileBrowserDivider]", 0);
 	else
 		CONSTRAINT(@"H:[documentView]|", 0);
+
+	// ==========================
+	// = Anchor Project Sidebar =
+	// ==========================
+
+	if(_projectSidebarView)
+	{
+		self.projectSidebarWidthConstraint = [NSLayoutConstraint constraintWithItem:_projectSidebarView attribute:NSLayoutAttributeWidth relatedBy:NSLayoutRelationEqual toItem:nil attribute:NSLayoutAttributeNotAnAttribute multiplier:1 constant:_projectSidebarWidth];
+		self.projectSidebarWidthConstraint.priority = NSLayoutPriorityDragThatCannotResizeWindow;
+		[_myConstraints addObject:self.projectSidebarWidthConstraint];
+
+		CONSTRAINT(@"V:|[projectSidebarDivider]|", 0);
+		CONSTRAINT(@"V:|[projectSidebarView]|", 0);
+		CONSTRAINT(@"H:|[projectSidebarView][projectSidebarDivider]", 0);
+	}
 
 	// =======================
 	// = Anchor File Browser =
@@ -195,6 +226,8 @@ NSString* const kUserDefaultsHTMLOutputSizeKey   = @"htmlOutputSize";
 			CONSTRAINT(@"H:[htmlOutputView][fileBrowserDivider][fileBrowserView]", 0);
 		else if(_fileBrowserOnRight)
 			CONSTRAINT(@"H:[documentView][fileBrowserDivider][fileBrowserView]", 0);
+		else if(_projectSidebarView)
+			CONSTRAINT(@"H:[projectSidebarDivider][fileBrowserView][fileBrowserDivider]", 0);
 		else
 			CONSTRAINT(@"H:|[fileBrowserView][fileBrowserDivider]", 0);
 
@@ -234,8 +267,16 @@ NSString* const kUserDefaultsHTMLOutputSizeKey   = @"htmlOutputSize";
 			CONSTRAINT(@"V:[documentView][htmlOutputDivider][htmlOutputView]|", 0);
 
 			// left + right
-			CONSTRAINT(@"H:|[htmlOutputView]|", 0);
-			CONSTRAINT(@"H:|[htmlOutputDivider]|", 0);
+			if(_projectSidebarView)
+			{
+				CONSTRAINT(@"H:[projectSidebarDivider][htmlOutputView]|", 0);
+				CONSTRAINT(@"H:[projectSidebarDivider][htmlOutputDivider]|", 0);
+			}
+			else
+			{
+				CONSTRAINT(@"H:|[htmlOutputView]|", 0);
+				CONSTRAINT(@"H:|[htmlOutputDivider]|", 0);
+			}
 		}
 	}
 
@@ -244,6 +285,14 @@ NSString* const kUserDefaultsHTMLOutputSizeKey   = @"htmlOutputSize";
 }
 
 #undef CONSTRAINT
+
+- (NSRect)projectSidebarResizeRect
+{
+	if(!_projectSidebarView)
+		return NSZeroRect;
+	NSRect r = _projectSidebarView.frame;
+	return NSMakeRect(NSMaxX(r)-4, NSMinY(r), 10, NSHeight(r));
+}
 
 - (NSRect)fileBrowserResizeRect
 {
@@ -263,6 +312,7 @@ NSString* const kUserDefaultsHTMLOutputSizeKey   = @"htmlOutputSize";
 
 - (void)resetCursorRects
 {
+	[self addCursorRect:[self projectSidebarResizeRect] cursor:[NSCursor resizeLeftRightCursor]];
 	[self addCursorRect:[self fileBrowserResizeRect] cursor:[NSCursor resizeLeftRightCursor]];
 	[self addCursorRect:[self htmlOutputResizeRect]  cursor:_htmlOutputOnRight ? [NSCursor resizeLeftRightCursor] : [NSCursor resizeUpDownCursor]];
 }
@@ -274,6 +324,8 @@ NSString* const kUserDefaultsHTMLOutputSizeKey   = @"htmlOutputSize";
 
 - (NSView*)hitTest:(NSPoint)aPoint
 {
+	if(NSMouseInRect([self convertPoint:aPoint fromView:[self superview]], [self projectSidebarResizeRect], [self isFlipped]))
+		return self;
 	if(NSMouseInRect([self convertPoint:aPoint fromView:[self superview]], [self fileBrowserResizeRect], [self isFlipped]))
 		return self;
 	if(NSMouseInRect([self convertPoint:aPoint fromView:[self superview]], [self htmlOutputResizeRect], [self isFlipped]))
@@ -289,7 +341,9 @@ NSString* const kUserDefaultsHTMLOutputSizeKey   = @"htmlOutputSize";
 
 	NSView* view = nil;
 	NSPoint mouseDownPos = [self convertPoint:[anEvent locationInWindow] fromView:nil];
-	if(NSMouseInRect(mouseDownPos, [self fileBrowserResizeRect], [self isFlipped]))
+	if(NSMouseInRect(mouseDownPos, [self projectSidebarResizeRect], [self isFlipped]))
+		view = _projectSidebarView;
+	else if(NSMouseInRect(mouseDownPos, [self fileBrowserResizeRect], [self isFlipped]))
 		view = _fileBrowserView;
 	else if(NSMouseInRect(mouseDownPos, [self htmlOutputResizeRect], [self isFlipped]))
 		view = _htmlOutputView;
@@ -300,6 +354,12 @@ NSString* const kUserDefaultsHTMLOutputSizeKey   = @"htmlOutputSize";
 	}
 	else
 	{
+		if(_projectSidebarView)
+		{
+			self.projectSidebarWidthConstraint.constant = NSWidth(_projectSidebarView.frame);
+			self.projectSidebarWidthConstraint.priority = NSLayoutPriorityDragThatCannotResizeWindow;
+		}
+
 		if(_fileBrowserView)
 		{
 			self.fileBrowserWidthConstraint.constant = NSWidth(_fileBrowserView.frame);
@@ -346,6 +406,15 @@ NSString* const kUserDefaultsHTMLOutputSizeKey   = @"htmlOutputSize";
 
 				[NSUserDefaults.standardUserDefaults setObject:NSStringFromSize(_htmlOutputSize) forKey:kUserDefaultsHTMLOutputSizeKey];
 			}
+			else if(view == _projectSidebarView)
+			{
+				CGFloat width = NSWidth(initialFrame) + (mouseCurrentPos.x - mouseDownPos.x);
+				_projectSidebarWidth = std::max<CGFloat>(160, round(width));
+				self.projectSidebarWidthConstraint.constant = _projectSidebarWidth;
+				self.projectSidebarWidthConstraint.priority = NSLayoutPriorityDragThatCannotResizeWindow-1;
+
+				[NSUserDefaults.standardUserDefaults setInteger:_projectSidebarWidth forKey:kUserDefaultsProjectSidebarWidthKey];
+			}
 			else if(view == _fileBrowserView)
 			{
 				CGFloat width = NSWidth(initialFrame) + (mouseCurrentPos.x - mouseDownPos.x) * (_fileBrowserOnRight ? -1 : +1);
@@ -370,6 +439,7 @@ NSString* const kUserDefaultsHTMLOutputSizeKey   = @"htmlOutputSize";
 			}
 		}
 
+		self.projectSidebarWidthConstraint.priority = NSLayoutPriorityDragThatCannotResizeWindow;
 		self.fileBrowserWidthConstraint.priority = NSLayoutPriorityDragThatCannotResizeWindow;
 		self.htmlOutputSizeConstraint.priority   = NSLayoutPriorityDragThatCannotResizeWindow-1;
 	}

@@ -1,5 +1,6 @@
 #import "DocumentWindowController.h"
 #import "ProjectLayoutView.h"
+#import "ProjectSidebarViewController.h"
 #import "SelectGrammarViewController.h"
 #import "OakRunCommandWindowController.h"
 #import <document/OakDocument.h>
@@ -73,7 +74,7 @@ static void show_command_error (std::string const& message, oak::uuid_t const& u
 	}];
 }
 
-@interface DocumentWindowController () <NSWindowDelegate, NSTouchBarDelegate, OakTabBarViewDelegate, OakTabBarViewDataSource, OakTextViewDelegate, OakUserDefaultsObserver, FileBrowserDelegate, FindDelegate>
+@interface DocumentWindowController () <NSWindowDelegate, NSTouchBarDelegate, OakTabBarViewDelegate, OakTabBarViewDataSource, OakTextViewDelegate, OakUserDefaultsObserver, FileBrowserDelegate, ProjectSidebarDelegate, FindDelegate>
 {
 	NSMutableSet<NSUUID*>*                 _stickyDocumentIdentifiers;
 
@@ -91,6 +92,7 @@ static void show_command_error (std::string const& message, oak::uuid_t const& u
 @property (nonatomic) OakTabBarView*              tabBarView;
 @property (nonatomic) OakDocumentView*            documentView;
 @property (nonatomic) OakTextView*                textView;
+@property (nonatomic) ProjectSidebarViewController* projectSidebar;
 @property (nonatomic) FileBrowserViewController*  fileBrowser;
 
 @property (nonatomic) BOOL                        disableFileBrowserWindowResize;
@@ -190,6 +192,9 @@ static NSArray* const kObservedKeyPaths = @[ @"arrayController.arrangedObjects.p
 
 		self.layoutView = [[ProjectLayoutView alloc] initWithFrame:NSZeroRect];
 		self.layoutView.documentView = self.documentView;
+		self.projectSidebar = [[ProjectSidebarViewController alloc] init];
+		self.projectSidebar.delegate = self;
+		self.layoutView.projectSidebarView = self.projectSidebar.view;
 
 		NSUInteger windowStyle = (NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable|NSWindowStyleMaskMiniaturizable);
 		self.window = [[NSWindow alloc] initWithContentRect:[NSWindow contentRectForFrameRect:[self frameRectForNewWindow] styleMask:windowStyle] styleMask:windowStyle backing:NSBackingStoreBuffered defer:NO];
@@ -339,6 +344,14 @@ static NSArray* const kObservedKeyPaths = @[ @"arrayController.arrangedObjects.p
 		[self openAndSelectDocument:defaultDocument activate:YES];
 	}
 	[self.window makeKeyAndOrderFront:sender];
+}
+
+- (void)windowDidBecomeKey:(NSNotification*)aNotification
+{
+	ProjectSidebarViewController* sidebar = self.projectSidebar;
+	dispatch_async(dispatch_get_main_queue(), ^{
+		[sidebar reloadContents];
+	});
 }
 
 - (void)makeTextViewFirstResponder:(id)sender { [self.window makeFirstResponder:self.textView]; }
@@ -1776,6 +1789,13 @@ static NSArray* const kObservedKeyPaths = @[ @"arrayController.arrangedObjects.p
 // ==================
 // = OakFileBrowser =
 // ==================
+
+- (void)projectSidebar:(ProjectSidebarViewController*)sidebar openURL:(NSURL*)url
+{
+	if(!url.isFileURL)
+		return;
+	[self openItems:@[ @{ @"path": url.path } ] closingOtherTabs:OakIsAlternateKeyOrMouseEvent() activate:YES];
+}
 
 - (void)fileBrowser:(FileBrowserViewController*)fileBrowser openURLs:(NSArray*)someURLs
 {
