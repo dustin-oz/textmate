@@ -37,6 +37,20 @@ static NSPopUpButton* OakCreateStatusBarPopUpButton (NSString* initialItemTitle 
 	return res;
 }
 
+static NSButton* OakCreateLanguagePresetButton (NSString* title, NSString* scope, BOOL showsPreview)
+{
+	NSButton* res = [NSButton buttonWithTitle:title target:nil action:@selector(selectLanguagePreset:)];
+	res.font = OakStatusBarFont();
+	res.bordered = NO;
+	res.identifier = scope;
+	res.tag = showsPreview ? 1 : 0;
+	res.toolTip = showsPreview ? [NSString stringWithFormat:@"Use %@ and show the preview", title] : [NSString stringWithFormat:@"Use %@", title];
+	res.accessibilityLabel = res.toolTip;
+	[res setContentHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
+	[res setContentCompressionResistancePriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
+	return res;
+}
+
 static NSButton* OakCreateImageToggleButton (NSImage* image, NSString* accessibilityLabel)
 {
 	NSButton* res = [NSButton new];
@@ -60,6 +74,9 @@ static NSButton* OakCreateImageToggleButton (NSImage* image, NSString* accessibi
 @property (nonatomic) NSPopUpButton* lspPopUp;
 @property (nonatomic) NSView*        lspDivider;
 @property (nonatomic) NSPopUpButton* copilotPopUp;
+@property (nonatomic) NSButton*      plainTextPresetButton;
+@property (nonatomic) NSButton*      markdownPresetButton;
+@property (nonatomic) NSButton*      htmlPresetButton;
 @property (nonatomic) NSButton*      macroRecordingButton;
 @property (nonatomic) NSArray<NSLayoutConstraint*>* lspVisibleConstraints;
 @property (nonatomic) NSArray<NSLayoutConstraint*>* lspHiddenConstraints;
@@ -90,6 +107,9 @@ static NSButton* OakCreateImageToggleButton (NSImage* image, NSString* accessibi
 		self.tabSizePopUp.pullsDown       = YES;
 		self.bundleItemsPopUp             = OakCreateStatusBarPopUpButton(nil, @"Bundle Item");
 		self.symbolPopUp                  = OakCreateStatusBarPopUpButton(@"", @"Symbol");
+		self.plainTextPresetButton       = OakCreateLanguagePresetButton(@"Plain Text", @"text.plain", NO);
+		self.markdownPresetButton         = OakCreateLanguagePresetButton(@"Markdown", @"text.html.markdown", YES);
+		self.htmlPresetButton             = OakCreateLanguagePresetButton(@"HTML", @"text.html.basic", NO);
 		self.macroRecordingButton         = OakCreateImageToggleButton(recordMacroImage, @"Record a macro");
 		self.macroRecordingButton.action  = @selector(toggleMacroRecording:);
 		self.macroRecordingButton.toolTip = @"Click to start recording a macro";
@@ -125,6 +145,13 @@ static NSButton* OakCreateImageToggleButton (NSImage* image, NSString* accessibi
 		NSView* dividerTwo   = OakCreateNSBoxSeparator();
 		NSView* dividerThree = OakCreateNSBoxSeparator();
 		NSView* dividerFour  = OakCreateNSBoxSeparator();
+		NSView* languagePresets = [NSView new];
+		[languagePresets setContentHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
+		[languagePresets setContentCompressionResistancePriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
+		OakAddAutoLayoutViewsToSuperview(@[ self.plainTextPresetButton, self.markdownPresetButton, self.htmlPresetButton ], languagePresets);
+		[languagePresets addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|[plain]-10-[markdown]-10-[html]|" options:NSLayoutFormatAlignAllCenterY metrics:nil views:@{ @"plain": self.plainTextPresetButton, @"markdown": self.markdownPresetButton, @"html": self.htmlPresetButton }]];
+		[languagePresets addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:|[plain]|" options:0 metrics:nil views:@{ @"plain": self.plainTextPresetButton }]];
+
 		NSView* dividerFive  = OakCreateNSBoxSeparator();
 		NSView* dividerSix   = OakCreateNSBoxSeparator();
 		self.lspDivider = dividerSix;
@@ -145,6 +172,7 @@ static NSButton* OakCreateImageToggleButton (NSImage* image, NSString* accessibi
 			@"dividerThree": dividerThree,
 			@"tabSize":      self.tabSizePopUp,
 			@"dividerFour":  dividerFour,
+			@"presets":      languagePresets,
 			@"symbol":       self.symbolPopUp,
 			@"dividerFive":  dividerFive,
 			@"dividerSix":   dividerSix,
@@ -166,7 +194,7 @@ static NSButton* OakCreateImageToggleButton (NSImage* image, NSString* accessibi
 		[self.symbolPopUp setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow-1 forOrientation:NSLayoutConstraintOrientationHorizontal];
 
 		// Shared constraints (everything up to symbol)
-		[self addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|-10-[line]-[selection(>=50,<=225)]-8-[dividerOne(==1)]-2-[grammar(>=125@400,>=50,<=225)]-5-[dividerTwo(==1)]-2-[tabSize]-4-[dividerThree(==1)]-5-[items(==31)]-4-[dividerFour(==1)]-2-[symbol(>=125@450,>=50)]" options:0 metrics:nil views:views]];
+		[self addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|-10-[line]-[selection(>=50,<=225)]-8-[dividerOne(==1)]-2-[grammar(>=125@400,>=50,<=225)]-5-[dividerTwo(==1)]-2-[tabSize]-4-[dividerThree(==1)]-5-[items(==31)]-4-[dividerFour(==1)]-8-[presets]-8-[symbol(>=50)]" options:0 metrics:nil views:views]];
 		[self addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|[topDivider]|" options:0 metrics:nil views:views]];
 		[self addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:|[topDivider(==1)]" options:0 metrics:nil views:views]];
 
@@ -174,7 +202,7 @@ static NSButton* OakCreateImageToggleButton (NSImage* image, NSString* accessibi
 		[self addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:[line]-[selection]-(>=1)-[grammar]-(>=1)-[tabSize]-(>=1)-[symbol]" options:NSLayoutFormatAlignAllBaseline metrics:nil views:views]];
 
 		// Center non-text control (without dividerSix — added dynamically)
-		[self addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:[selection]-(>=1)-[dividerOne]-(>=1)-[dividerTwo]-(>=1)-[dividerThree]-(>=1)-[items]-(>=1)-[dividerFour]-(>=1)-[dividerFive]-(>=1)-[recording]" options:NSLayoutFormatAlignAllCenterY metrics:nil views:views]];
+		[self addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:[selection]-(>=1)-[dividerOne]-(>=1)-[dividerTwo]-(>=1)-[dividerThree]-(>=1)-[items]-(>=1)-[dividerFour]-(>=1)-[presets]-(>=1)-[dividerFive]-(>=1)-[recording]" options:NSLayoutFormatAlignAllCenterY metrics:nil views:views]];
 
 		// LSP visible: symbol → copilot → dividerSix → lsp → dividerFive
 		self.lspVisibleConstraints = ({
@@ -207,6 +235,7 @@ static NSButton* OakCreateImageToggleButton (NSImage* image, NSString* accessibi
 		[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(symbolPopUpButtonWillPopUp:) name:NSPopUpButtonWillPopUpNotification object:self.symbolPopUp];
 		[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(lspPopUpButtonWillPopUp:) name:NSPopUpButtonWillPopUpNotification object:self.lspPopUp];
 		[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(copilotPopUpButtonWillPopUp:) name:NSPopUpButtonWillPopUpNotification object:self.copilotPopUp];
+		[self updateLanguagePresetButtons];
 	}
 	return self;
 }
@@ -229,9 +258,26 @@ static NSButton* OakCreateImageToggleButton (NSImage* image, NSString* accessibi
 	self.tabSizePopUp.menu = MBCreateMenu(items);
 }
 
+- (void)updateLanguagePresetButtons
+{
+	for(NSButton* button in @[ self.plainTextPresetButton, self.markdownPresetButton, self.htmlPresetButton ])
+	{
+		NSString* scope = button.identifier;
+		BOOL selected = scope && [scope isEqualToString:_fileType];
+		NSColor* color = selected ? NSColor.labelColor : NSColor.secondaryLabelColor;
+		NSFont* font = selected ? [[NSFontManager sharedFontManager] convertFont:OakStatusBarFont() toHaveTrait:NSBoldFontMask] : OakStatusBarFont();
+		button.attributedTitle = [[NSAttributedString alloc] initWithString:button.title attributes:@{
+			NSFontAttributeName: font,
+			NSForegroundColorAttributeName: color,
+		}];
+	}
+}
+
 - (void)setTarget:(id)newTarget
 {
 	_target = newTarget;
+	for(NSButton* button in @[ self.plainTextPresetButton, self.markdownPresetButton, self.htmlPresetButton ])
+		button.target = newTarget;
 	[self setupTabSizeMenu:self];
 }
 
@@ -337,6 +383,7 @@ static NSButton* OakCreateImageToggleButton (NSImage* image, NSString* accessibi
 	_fileType = newFileType;
 	for(auto const& item : bundles::query(bundles::kFieldGrammarScope, to_s(newFileType)))
 		self.grammarName = [NSString stringWithCxxString:item->name()];
+	[self updateLanguagePresetButtons];
 }
 
 - (void)setRecordingTimer:(NSTimer*)aTimer

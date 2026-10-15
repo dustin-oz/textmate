@@ -541,6 +541,29 @@ static NSString* const kFoldingsColumnIdentifier  = @"foldings";
 		[_textView performBundleItem:item];
 }
 
+- (void)selectLanguagePreset:(id)sender
+{
+	NSString* scope = [sender identifier];
+	if(![scope isKindOfClass:NSString.class] || scope.length == 0)
+		return;
+
+	for(auto const& item : bundles::query(bundles::kFieldGrammarScope, to_s(scope), scope::wildcard, bundles::kItemTypeGrammar))
+	{
+		if(!item->hidden_from_user())
+		{
+			[_textView performBundleItem:item];
+			break;
+		}
+	}
+
+	if([sender tag] == 1)
+	{
+		static NSString* const markdownPreviewUUID = @"B52DEA16-8480-11D9-BE59-000D93B3A10E";
+		if(bundles::item_ptr item = bundles::lookup(to_s(markdownPreviewUUID)))
+			[_textView performBundleItem:item];
+	}
+}
+
 - (void)goToSymbol:(id)sender
 {
 	[self selectAndCenter:[sender representedObject]];
