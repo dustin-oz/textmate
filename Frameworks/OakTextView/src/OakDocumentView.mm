@@ -32,6 +32,8 @@
 static NSString* const kBookmarksColumnIdentifier = @"bookmarks";
 static NSString* const kFoldingsColumnIdentifier  = @"foldings";
 
+static BOOL OakDocumentViewFileTypeSupportsPreview (NSString* fileType);
+
 @interface OakDocumentView () <NSAccessibilityGroup, GutterViewDelegate, GutterViewColumnDataSource, GutterViewColumnDelegate, OTVStatusBarDelegate>
 {
 	NSScrollView* gutterScrollView;
@@ -294,8 +296,16 @@ static NSString* const kFoldingsColumnIdentifier  = @"foldings";
 	else if([aKeyPath isEqualToString:@"fileType"])
 	{
 		_statusBar.fileType = self.document.fileType;
-		if(_markdownPreviewVisible && ![self.document.fileType isEqualToString:@"text.html.markdown"])
-			[self setMarkdownPreviewVisible:NO];
+		if(_markdownPreviewVisible)
+		{
+			if(!OakDocumentViewFileTypeSupportsPreview(self.document.fileType))
+				[self setMarkdownPreviewVisible:NO];
+			else if(_textView.document == self.document)
+			{
+				[_statusBar setMarkdownPreviewing:YES];
+				[self runMarkdownPreview];
+			}
+		}
 	}
 	else if([aKeyPath isEqualToString:@"tabSize"])
 	{
@@ -367,7 +377,7 @@ static NSString* const kFoldingsColumnIdentifier  = @"foldings";
 	if(oldDocument)
 		[oldDocument close];
 
-	if(_markdownPreviewVisible && [self.document.fileType isEqualToString:@"text.html.markdown"])
+	if(_markdownPreviewVisible && OakDocumentViewFileTypeSupportsPreview(self.document.fileType))
 		[self runMarkdownPreview];
 
 	if(aDocument)
@@ -581,10 +591,33 @@ static NSString* const kFoldingsColumnIdentifier  = @"foldings";
 }
 
 static NSString* const OakMarkdownPreviewCommandUUID = @"B52DEA16-8480-11D9-BE59-000D93B3A10E";
+static NSString* const OakHTMLPreviewCommandUUID = @"AC5F664E-86BA-4D81-B6CE-1B12F69FA490";
 
-- (void)stopMarkdownPreviewCommand
+static BOOL OakDocumentViewFileTypeSupportsPreview (NSString* fileType)
 {
-	NSUUID* uuid = [[NSUUID alloc] initWithUUIDString:OakMarkdownPreviewCommandUUID];
+	return [fileType isEqualToString:@"text.html.markdown"] || [fileType isEqualToString:@"text.html.basic"];
+}
+
+static BOOL OakPreviewIdentifierMatches (NSUUID* identifier)
+{
+	if(!identifier)
+		return NO;
+	return [identifier.UUIDString caseInsensitiveCompare:OakMarkdownPreviewCommandUUID] == NSOrderedSame
+		|| [identifier.UUIDString caseInsensitiveCompare:OakHTMLPreviewCommandUUID] == NSOrderedSame;
+}
+
+- (NSString*)previewCommandUUID
+{
+	if([self.document.fileType isEqualToString:@"text.html.basic"])
+		return OakHTMLPreviewCommandUUID;
+	if([self.document.fileType isEqualToString:@"text.html.markdown"])
+		return OakMarkdownPreviewCommandUUID;
+	return nil;
+}
+
+- (void)stopPreviewCommandWithUUID:(NSString*)uuidString
+{
+	NSUUID* uuid = [[NSUUID alloc] initWithUUIDString:uuidString];
 	if(OakCommandRefresher* refresher = [OakCommandRefresher findRefresherForCommandUUID:uuid document:self.document window:self.window])
 	{
 		[refresher.command terminate];
@@ -592,10 +625,19 @@ static NSString* const OakMarkdownPreviewCommandUUID = @"B52DEA16-8480-11D9-BE59
 	}
 }
 
+- (void)stopMarkdownPreviewCommand
+{
+	[self stopPreviewCommandWithUUID:OakMarkdownPreviewCommandUUID];
+	[self stopPreviewCommandWithUUID:OakHTMLPreviewCommandUUID];
+}
+
 - (void)runMarkdownPreview
 {
 	[self stopMarkdownPreviewCommand];
-	if(bundles::item_ptr item = bundles::lookup(to_s(OakMarkdownPreviewCommandUUID)))
+	NSString* uuidString = [self previewCommandUUID];
+	if(!uuidString)
+		return;
+	if(bundles::item_ptr item = bundles::lookup(to_s(uuidString)))
 		[_textView performBundleItem:item];
 }
 
@@ -604,7 +646,7 @@ static NSString* const OakMarkdownPreviewCommandUUID = @"B52DEA16-8480-11D9-BE59
 	if(_markdownPreviewVisible == flag)
 		return;
 
-	if(flag && ![self.document.fileType isEqualToString:@"text.html.markdown"])
+	if(flag && !OakDocumentViewFileTypeSupportsPreview(self.document.fileType))
 		return;
 
 	if(!flag)
@@ -786,6 +828,13 @@ static NSString* const OakMarkdownPreviewScript = @R"JS(
 	if(!_markdownPreviewVisible || !self.markdownPreviewView)
 		return;
 
+	// HTML preview is the page itself. Leave its styles alone.
+	if([self.document.fileType isEqualToString:@"text.html.basic"])
+	{
+		self.markdownPreviewView.webView.underPageBackgroundColor = NSColor.textBackgroundColor;
+		return;
+	}
+
 	theme_ptr theme = _textView.theme;
 	NSString* background = (theme && !theme->is_transparent()) ? OakPreviewCSSColor(theme->background()) : nil;
 	NSString* foreground = theme ? OakPreviewCSSColor(theme->foreground()) : nil;
@@ -875,7 +924,7 @@ static NSString* const OakMarkdownPreviewScript = @R"JS(
 
 - (OakHTMLOutputView*)htmlOutputView:(BOOL)createFlag forIdentifier:(NSUUID*)identifier
 {
-	if(_markdownPreviewVisible && identifier && [identifier.UUIDString caseInsensitiveCompare:OakMarkdownPreviewCommandUUID] == NSOrderedSame)
+	if(_markdownPreviewVisible && OakPreviewIdentifierMatches(identifier))
 		return self.markdownPreviewView;
 
 	id responder = self.nextResponder;

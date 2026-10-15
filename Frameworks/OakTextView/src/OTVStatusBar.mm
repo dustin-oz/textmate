@@ -402,7 +402,8 @@ static NSButton* OakCreateImageToggleButton (NSImage* image, NSString* accessibi
 	for(auto const& item : bundles::query(bundles::kFieldGrammarScope, to_s(newFileType)))
 		self.grammarName = [NSString stringWithCxxString:item->name()];
 	[self updateLanguagePresetButtons];
-	[self setShowsMarkdownPreviewToggle:[newFileType isEqualToString:@"text.html.markdown"]];
+	BOOL showsPreview = [newFileType isEqualToString:@"text.html.markdown"] || [newFileType isEqualToString:@"text.html.basic"];
+	[self setShowsMarkdownPreviewToggle:showsPreview];
 }
 
 - (void)setShowsMarkdownPreviewToggle:(BOOL)flag
@@ -410,12 +411,19 @@ static NSButton* OakCreateImageToggleButton (NSImage* image, NSString* accessibi
 	self.markdownPreviewButton.hidden = !flag;
 	self.markdownPreviewGap.constant = flag ? 10 : 0;
 	self.markdownPreviewWidth.active = !flag;
+	if(flag && [self.markdownPreviewButton.title isEqualToString:@"Preview"])
+	{
+		BOOL html = [self.fileType isEqualToString:@"text.html.basic"];
+		self.markdownPreviewButton.toolTip = html ? @"Show this HTML in the window" : @"Show the Markdown preview in this window";
+		self.markdownPreviewButton.accessibilityLabel = self.markdownPreviewButton.toolTip;
+	}
 }
 
 - (void)setMarkdownPreviewing:(BOOL)flag
 {
 	self.markdownPreviewButton.title = flag ? @"Edit" : @"Preview";
-	self.markdownPreviewButton.toolTip = flag ? @"Return to the editor" : @"Show the Markdown preview in this window";
+	BOOL html = [self.fileType isEqualToString:@"text.html.basic"];
+	self.markdownPreviewButton.toolTip = flag ? @"Return to the editor" : (html ? @"Show this HTML in the window" : @"Show the Markdown preview in this window");
 	self.markdownPreviewButton.accessibilityLabel = self.markdownPreviewButton.toolTip;
 	NSFont* font = flag ? [[NSFontManager sharedFontManager] convertFont:OakStatusBarFont() toHaveTrait:NSBoldFontMask] : OakStatusBarFont();
 	self.markdownPreviewButton.attributedTitle = [[NSAttributedString alloc] initWithString:self.markdownPreviewButton.title attributes:@{

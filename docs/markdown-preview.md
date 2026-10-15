@@ -7,3 +7,5 @@ Preview runs TextMate’s existing Markdown preview command and shows the result
 The Markdown language button only sets the file type. It does not open a separate preview window.
 
 The preview uses the colors of the current editor theme, including a dark theme when the editor theme is dark. If the theme has no background, it follows the system appearance. Code blocks, including fenced blocks, are colored with the theme's comment, string, keyword, number, and function colors.
+
+HTML files get the same Preview button. It renders the page in the editor area with TextMate’s existing HTML preview, then Edit returns to the source. The HTML page keeps its own styles.
