@@ -201,8 +201,9 @@ static NSArray* const kObservedKeyPaths = @[ @"arrayController.arrangedObjects.p
 		self.projectSidebar = [[ProjectSidebarViewController alloc] init];
 		self.projectSidebar.delegate = self;
 
+		NSRect windowFrame = [self frameRectForNewWindow];
 		NSUInteger windowStyle = (NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable|NSWindowStyleMaskMiniaturizable|NSWindowStyleMaskFullSizeContentView);
-		self.window = [[NSWindow alloc] initWithContentRect:[NSWindow contentRectForFrameRect:[self frameRectForNewWindow] styleMask:windowStyle] styleMask:windowStyle backing:NSBackingStoreBuffered defer:NO];
+		self.window = [[NSWindow alloc] initWithContentRect:[NSWindow contentRectForFrameRect:windowFrame styleMask:windowStyle] styleMask:windowStyle backing:NSBackingStoreBuffered defer:NO];
 		self.window.animationBehavior  = NSWindowAnimationBehaviorDocumentWindow;
 		self.window.collectionBehavior = NSWindowCollectionBehaviorFullScreenPrimary;
 		self.window.delegate           = self;
@@ -248,6 +249,9 @@ static NSArray* const kObservedKeyPaths = @[ @"arrayController.arrangedObjects.p
 		self.projectSplitViewController = [[NSSplitViewController alloc] init];
 		self.projectSplitViewController.splitViewItems = @[ sidebarItem, contentItem ];
 		self.window.contentViewController = self.projectSplitViewController;
+		// Installing the split view can snap the window to the chrome height.
+		// Put the chosen frame back. Leave the window free to resize afterward.
+		[self.window setFrame:windowFrame display:NO];
 		self.window.initialFirstResponder = self.textView;
 
 		[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(projectSplitViewDidResize:) name:NSSplitViewDidResizeSubviewsNotification object:self.projectSplitViewController.splitView];
@@ -289,6 +293,27 @@ static NSArray* const kObservedKeyPaths = @[ @"arrayController.arrangedObjects.p
 // = Find suitable frame for new window =
 // ======================================
 
+static CGFloat const kCollapsedWindowMaxWidth  = 280;
+static CGFloat const kCollapsedWindowMaxHeight = 180;
+
+- (NSRect)defaultWindowFrame
+{
+	NSRect visible = NSScreen.mainScreen.visibleFrame;
+	CGFloat width  = MIN(1080, MAX(780, floor(NSWidth(visible) * 0.62)));
+	CGFloat height = MIN(620, floor(width * 0.58));
+	if(width > NSWidth(visible) - 48)
+		width = NSWidth(visible) - 48;
+	if(height > NSHeight(visible) - 48)
+		height = NSHeight(visible) - 48;
+
+	return NSIntegralRect(NSMakeRect(NSMidX(visible) - width / 2.0, NSMidY(visible) - height / 2.0, width, height));
+}
+
+- (BOOL)isUsableWindowFrame:(NSRect)frame
+{
+	return NSWidth(frame) >= kCollapsedWindowMaxWidth && NSHeight(frame) >= kCollapsedWindowMaxHeight;
+}
+
 - (NSRect)windowFrame
 {
 	NSRect res = [self.window frame];
@@ -321,7 +346,7 @@ static NSArray* const kObservedKeyPaths = @[ @"arrayController.arrangedObjects.p
 
 		NSRect scrRect = [[NSScreen mainScreen] visibleFrame];
 		if(NSContainsRect(scrRect, r))
-			return r;
+			return [self isUsableWindowFrame:r] ? r : [self defaultWindowFrame];
 
 		r.origin.x = 61;
 		r.origin.y = NSMaxY(scrRect) - NSHeight(r);
@@ -340,22 +365,26 @@ static NSArray* const kObservedKeyPaths = @[ @"arrayController.arrangedObjects.p
 				r = [(DocumentWindowController*)mainWindow.delegate cascadedWindowFrame];
 		}
 
-		return r;
+		return [self isUsableWindowFrame:r] ? r : [self defaultWindowFrame];
 	}
 
 	if(NSString* rectStr = [NSUserDefaults.standardUserDefaults stringForKey:@"DocumentControllerWindowFrame"])
-		return NSRectFromString(rectStr);
+	{
+		NSRect saved = NSRectFromString(rectStr);
+		if([self isUsableWindowFrame:saved])
+			return saved;
+	}
 
-	NSRect r = [[NSScreen mainScreen] visibleFrame];
-	return r = NSIntegralRect(NSInsetRect(r, NSWidth(r) / 3, NSHeight(r) / 5));
+	return [self defaultWindowFrame];
 }
 
 // =========================
 
 - (void)windowWillClose:(NSNotification*)aNotification
 {
-	if((([self.window styleMask] & NSWindowStyleMaskFullScreen) != NSWindowStyleMaskFullScreen) && !self.window.isZoomed)
-		[NSUserDefaults.standardUserDefaults setObject:NSStringFromRect([self windowFrame]) forKey:@"DocumentControllerWindowFrame"];
+	NSRect savedFrame = [self windowFrame];
+	if((([self.window styleMask] & NSWindowStyleMaskFullScreen) != NSWindowStyleMaskFullScreen) && !self.window.isZoomed && [self isUsableWindowFrame:savedFrame])
+		[NSUserDefaults.standardUserDefaults setObject:NSStringFromRect(savedFrame) forKey:@"DocumentControllerWindowFrame"];
 
 	// Resign first responder before teardown to let TextInputUI disconnect cleanly
 	if([self.window.firstResponder isKindOfClass:[NSView class]])
@@ -2654,6 +2683,8 @@ static NSUInteger DisableSessionSavingCount = 0;
 			if([windowFrame hasPrefix:@"{"]) // Legacy NSRect
 					[controller.window setFrame:NSRectFromString(windowFrame) display:NO];
 			else	[controller.window setFrameFromString:windowFrame];
+			if(![controller isUsableWindowFrame:controller.window.frame])
+				[controller.window setFrame:[controller defaultWindowFrame] display:NO];
 		}
 
 		if([project[@"miniaturized"] boolValue])
@@ -2758,7 +2789,7 @@ static NSUInteger DisableSessionSavingCount = 0;
 		res[@"fullScreen"] = @YES;
 	else if(self.window.isZoomed)
 		res[@"zoomed"] = @YES;
-	else
+	else if([self isUsableWindowFrame:self.window.frame])
 		res[@"windowFrame"] = [self.window stringWithSavedFrame];
 
 	res[@"miniaturized"]       = @([self.window isMiniaturized]);

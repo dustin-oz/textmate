@@ -11,3 +11,5 @@ Added 2026-10-15. A left-hand column on every document window for folders you wa
 - Drag the sidebar’s right edge to resize it.
 
 The older File Browser (the Finder-style one) is unchanged.
+
+Closing the last tab closes the window. The next one opens at the last size you left it. A window saved as only the title bar and status bar opens at a wide default instead, including when it has no tabs yet. That default can be resized from any corner.
