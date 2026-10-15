@@ -1,6 +1,7 @@
 #import <OakTabBarView/OakTabBarView.h>
 
 extern NSString* const kUserDefaultsProjectSidebarWidthKey;
+extern NSString* const kUserDefaultsProjectSidebarCollapsedKey;
 
 @interface ProjectLayoutView : NSView
 @property (nonatomic) NSView* documentView;

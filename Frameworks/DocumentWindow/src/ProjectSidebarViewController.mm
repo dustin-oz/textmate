@@ -238,9 +238,14 @@ static NSURL* ProjectSidebarUniqueURL (NSURL* directory, NSString* baseName, NSS
 	background.state = NSVisualEffectStateFollowsWindowActiveState;
 	self.view = background;
 
-	NSTextField* title = OakCreateLabel(@"Projects", [NSFont systemFontOfSize:NSFont.smallSystemFontSize weight:NSFontWeightSemibold]);
-	title.lineBreakMode = NSLineBreakByTruncatingTail;
-	[title setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow forOrientation:NSLayoutConstraintOrientationHorizontal];
+	NSTextField* title = OakCreateLabel(@"Projects", [NSFont systemFontOfSize:NSFont.smallSystemFontSize weight:NSFontWeightSemibold], NSTextAlignmentLeft, NSLineBreakByTruncatingTail);
+	title.textColor = NSColor.secondaryLabelColor;
+	[title setContentHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationVertical];
+	[title setContentCompressionResistancePriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationVertical];
+	NSButton* collapseButton = [self headerButtonWithSymbol:@"sidebar.left" action:@selector(toggleProjectSidebar:) tooltip:@"Hide Sidebar"];
+	collapseButton.target = (id)self.delegate;
+	collapseButton.keyEquivalent = @"";
+	collapseButton.refusesFirstResponder = YES;
 	NSButton* addButton = [self headerButtonWithSymbol:@"folder.badge.plus" action:@selector(addFolder:) tooltip:@"Add Existing Folder"];
 	NSButton* newFolderButton = [self headerButtonWithSymbol:@"folder.fill.badge.plus" action:@selector(newFolder:) tooltip:@"New Folder"];
 	NSButton* newFileButton = [self headerButtonWithSymbol:@"doc.badge.plus" action:@selector(newFile:) tooltip:@"New File"];
@@ -287,13 +292,14 @@ static NSURL* ProjectSidebarUniqueURL (NSURL* directory, NSString* baseName, NSS
 	title.translatesAutoresizingMaskIntoConstraints = NO;
 	OakAddAutoLayoutViewsToSuperview(@[ header, separator, self.emptyLabel, scrollView ], background);
 	[header addSubview:title];
+	[header addSubview:collapseButton];
 	[header addSubview:addButton];
 	[header addSubview:newFolderButton];
 	[header addSubview:newFileButton];
 
 	NSDictionary* views = @{
 		@"header": header,
-		@"title": title,
+		@"collapse": collapseButton,
 		@"add": addButton,
 		@"newFolder": newFolderButton,
 		@"newFile": newFileButton,
@@ -307,15 +313,18 @@ static NSURL* ProjectSidebarUniqueURL (NSURL* directory, NSString* baseName, NSS
 	self.contentTopConstraint = [header.topAnchor constraintEqualToAnchor:background.topAnchor];
 	[NSLayoutConstraint activateConstraints:@[
 		self.contentTopConstraint,
-		[header.heightAnchor constraintEqualToConstant:32],
 		[separator.topAnchor constraintEqualToAnchor:header.bottomAnchor],
 		[separator.heightAnchor constraintEqualToConstant:1],
 		[scrollView.topAnchor constraintEqualToAnchor:separator.bottomAnchor],
 		[scrollView.bottomAnchor constraintEqualToAnchor:background.bottomAnchor],
+		[title.topAnchor constraintEqualToAnchor:header.topAnchor constant:2],
+		[title.leadingAnchor constraintEqualToAnchor:header.leadingAnchor constant:8],
+		[title.trailingAnchor constraintLessThanOrEqualToAnchor:header.trailingAnchor constant:-8],
+		[collapseButton.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:1],
+		[collapseButton.bottomAnchor constraintEqualToAnchor:header.bottomAnchor constant:-4],
 	]];
-	[header addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|-10-[title]-(>=4)-[add(24)]-4-[newFolder(24)]-4-[newFile(24)]-6-|" options:NSLayoutFormatAlignAllCenterY metrics:nil views:views]];
-	[header addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:|[title]|" options:0 metrics:nil views:views]];
-	for(NSButton* button in @[ addButton, newFolderButton, newFileButton ])
+	[header addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|-6-[collapse(24)]-(>=4)-[add(24)]-4-[newFolder(24)]-4-[newFile(24)]-6-|" options:NSLayoutFormatAlignAllCenterY metrics:nil views:views]];
+	for(NSButton* button in @[ collapseButton, addButton, newFolderButton, newFileButton ])
 		[button addConstraint:[NSLayoutConstraint constraintWithItem:button attribute:NSLayoutAttributeHeight relatedBy:NSLayoutRelationEqual toItem:nil attribute:NSLayoutAttributeNotAnAttribute multiplier:1 constant:24]];
 	[background addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|-12-[empty]-12-|" options:0 metrics:nil views:views]];
 	[background addConstraint:[NSLayoutConstraint constraintWithItem:self.emptyLabel attribute:NSLayoutAttributeCenterY relatedBy:NSLayoutRelationEqual toItem:scrollView attribute:NSLayoutAttributeCenterY multiplier:1 constant:0]];

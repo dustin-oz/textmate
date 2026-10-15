@@ -94,6 +94,9 @@ static void show_command_error (std::string const& message, oak::uuid_t const& u
 @property (nonatomic) NSVisualEffectView*         tabBarChrome;
 @property (nonatomic) BOOL                        projectSidebarWidthApplied;
 @property (nonatomic) BOOL                        suppressSidebarWidthSave;
+@property (nonatomic) BOOL                        suppressSidebarCollapseApply;
+@property (nonatomic) NSButton*                   showSidebarButton;
+@property (nonatomic) NSLayoutConstraint*         tabBarLeadingConstraint;
 @property (nonatomic) ProjectLayoutView*          layoutView;
 @property (nonatomic) OakTabBarView*              tabBarView;
 @property (nonatomic) OakDocumentView*            documentView;
@@ -175,6 +178,26 @@ namespace
 
 static NSArray* const kObservedKeyPaths = @[ @"arrayController.arrangedObjects.path", @"arrayController.arrangedObjects.displayName", @"arrayController.arrangedObjects.documentEdited", @"selectedDocument.path", @"selectedDocument.displayName", @"selectedDocument.icon", @"selectedDocument.onDisk" , @"selectedDocument.documentEdited" ];
 
+@interface DocumentWindow : NSWindow
+@end
+
+@implementation DocumentWindow
+// New Tab is Command-Option-N. Handle it before the text view or the sidebar
+// can take the key and leave the menu shortcut doing nothing.
+- (BOOL)performKeyEquivalent:(NSEvent*)anEvent
+{
+	NSEventModifierFlags flags = anEvent.modifierFlags & (NSEventModifierFlagCommand | NSEventModifierFlagOption | NSEventModifierFlagControl | NSEventModifierFlagShift);
+	NSString* chars = anEvent.charactersIgnoringModifiers.lowercaseString;
+	if(flags == (NSEventModifierFlagCommand | NSEventModifierFlagOption) && [chars isEqualToString:@"n"])
+	{
+		if(!anEvent.isARepeat && [self.delegate respondsToSelector:@selector(newDocumentInTab:)])
+			[(id)self.delegate newDocumentInTab:nil];
+		return YES;
+	}
+	return [super performKeyEquivalent:anEvent];
+}
+@end
+
 @implementation DocumentWindowController
 + (KVDB*)sharedProjectStateDB
 {
@@ -203,7 +226,7 @@ static NSArray* const kObservedKeyPaths = @[ @"arrayController.arrangedObjects.p
 
 		NSRect windowFrame = [self frameRectForNewWindow];
 		NSUInteger windowStyle = (NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable|NSWindowStyleMaskMiniaturizable|NSWindowStyleMaskFullSizeContentView);
-		self.window = [[NSWindow alloc] initWithContentRect:[NSWindow contentRectForFrameRect:windowFrame styleMask:windowStyle] styleMask:windowStyle backing:NSBackingStoreBuffered defer:NO];
+		self.window = [[DocumentWindow alloc] initWithContentRect:[NSWindow contentRectForFrameRect:windowFrame styleMask:windowStyle] styleMask:windowStyle backing:NSBackingStoreBuffered defer:NO];
 		self.window.animationBehavior  = NSWindowAnimationBehaviorDocumentWindow;
 		self.window.collectionBehavior = NSWindowCollectionBehaviorFullScreenPrimary;
 		self.window.delegate           = self;
@@ -225,13 +248,23 @@ static NSArray* const kObservedKeyPaths = @[ @"arrayController.arrangedObjects.p
 			[self.tabBarChrome.trailingAnchor constraintEqualToAnchor:content.trailingAnchor],
 			self.tabBarHeightConstraint,
 			[self.tabBarView.topAnchor constraintEqualToAnchor:self.tabBarChrome.topAnchor],
-			[self.tabBarView.leadingAnchor constraintEqualToAnchor:self.tabBarChrome.leadingAnchor],
 			[self.tabBarView.trailingAnchor constraintEqualToAnchor:self.tabBarChrome.trailingAnchor],
 			[self.tabBarView.bottomAnchor constraintEqualToAnchor:self.tabBarChrome.bottomAnchor],
 			[self.layoutView.topAnchor constraintEqualToAnchor:self.tabBarChrome.bottomAnchor],
 			[self.layoutView.leadingAnchor constraintEqualToAnchor:content.leadingAnchor],
 			[self.layoutView.trailingAnchor constraintEqualToAnchor:content.trailingAnchor],
 			[self.layoutView.bottomAnchor constraintEqualToAnchor:content.bottomAnchor],
+		]];
+		self.tabBarLeadingConstraint = [self.tabBarView.leadingAnchor constraintEqualToAnchor:self.tabBarChrome.leadingAnchor];
+		self.tabBarLeadingConstraint.active = YES;
+		self.showSidebarButton = [self projectSidebarToggleButtonWithTooltip:@"Show Sidebar"];
+		self.showSidebarButton.hidden = YES;
+		[self.tabBarChrome addSubview:self.showSidebarButton];
+		[NSLayoutConstraint activateConstraints:@[
+			[self.showSidebarButton.leadingAnchor constraintEqualToAnchor:self.tabBarChrome.leadingAnchor constant:2],
+			[self.showSidebarButton.centerYAnchor constraintEqualToAnchor:self.tabBarChrome.centerYAnchor],
+			[self.showSidebarButton.widthAnchor constraintEqualToConstant:22],
+			[self.showSidebarButton.heightAnchor constraintEqualToConstant:22],
 		]];
 
 		NSViewController* contentController = [[NSViewController alloc] init];
@@ -243,7 +276,11 @@ static NSArray* const kObservedKeyPaths = @[ @"arrayController.arrangedObjects.p
 		sidebarItem.allowsFullHeightLayout = YES;
 		sidebarItem.preferredThicknessFraction = NSSplitViewItemUnspecifiedDimension;
 		sidebarItem.holdingPriority = NSLayoutPriorityDefaultHigh;
+		// A sidebar item collapses itself when the split view changes size.
+		// Opening a tab does that. Keep collapse under the button only.
 		sidebarItem.canCollapse = NO;
+		sidebarItem.springLoaded = NO;
+		sidebarItem.collapseBehavior = NSSplitViewItemCollapseBehaviorPreferResizingSiblingsWithFixedSplitView;
 
 		NSSplitViewItem* contentItem = [NSSplitViewItem splitViewItemWithViewController:contentController];
 		self.projectSplitViewController = [[NSSplitViewController alloc] init];
@@ -252,6 +289,11 @@ static NSArray* const kObservedKeyPaths = @[ @"arrayController.arrangedObjects.p
 		// Installing the split view can snap the window to the chrome height.
 		// Put the chosen frame back. Leave the window free to resize afterward.
 		[self.window setFrame:windowFrame display:NO];
+		if([NSUserDefaults.standardUserDefaults boolForKey:kUserDefaultsProjectSidebarCollapsedKey])
+		{
+			sidebarItem.collapsed = YES;
+			[self.window setFrame:windowFrame display:NO];
+		}
 		self.window.initialFirstResponder = self.textView;
 
 		[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(projectSplitViewDidResize:) name:NSSplitViewDidResizeSubviewsNotification object:self.projectSplitViewController.splitView];
@@ -409,11 +451,87 @@ static CGFloat const kCollapsedWindowMaxHeight = 180;
 	[self.window makeKeyAndOrderFront:sender];
 }
 
+- (NSButton*)projectSidebarToggleButtonWithTooltip:(NSString*)tooltip
+{
+	NSImageSymbolConfiguration* symbol = [NSImageSymbolConfiguration configurationWithPointSize:13 weight:NSFontWeightRegular];
+	NSImage* image = [[NSImage imageWithSystemSymbolName:@"sidebar.left" accessibilityDescription:tooltip] imageWithSymbolConfiguration:symbol];
+	NSButton* button = [NSButton buttonWithImage:image target:self action:@selector(toggleProjectSidebar:)];
+	button.bezelStyle = NSBezelStyleInline;
+	button.bordered = NO;
+	button.toolTip = tooltip;
+	button.keyEquivalent = @"";
+	button.refusesFirstResponder = YES;
+	button.translatesAutoresizingMaskIntoConstraints = NO;
+	return button;
+}
+
+- (BOOL)isProjectSidebarCollapsed
+{
+	return self.projectSplitViewController.splitViewItems.firstObject.collapsed;
+}
+
 - (void)setTabBarCollapsed:(BOOL)flag
 {
-	self.tabBarHeightConstraint.constant = flag ? 0 : 23;
+	BOOL keepChromeForSidebarToggle = [self isProjectSidebarCollapsed];
+	BOOL hideChrome = flag && !keepChromeForSidebarToggle;
+	self.tabBarHeightConstraint.constant = hideChrome ? 0 : 23;
 	self.tabBarView.hidden = flag;
-	self.tabBarChrome.hidden = flag;
+	self.tabBarChrome.hidden = hideChrome;
+	self.showSidebarButton.hidden = !keepChromeForSidebarToggle;
+	self.tabBarLeadingConstraint.constant = keepChromeForSidebarToggle ? 26 : 0;
+}
+
+- (void)refreshTabBarCollapsed
+{
+	BOOL disableTabBarCollapsingKey = [NSUserDefaults.standardUserDefaults boolForKey:kUserDefaultsDisableTabBarCollapsingKey];
+	[self setTabBarCollapsed:!disableTabBarCollapsingKey && self.documents.count <= 1];
+}
+
+- (void)applySavedProjectSidebarCollapsed
+{
+	if(self.suppressSidebarCollapseApply)
+		return;
+
+	NSSplitViewItem* item = self.projectSplitViewController.splitViewItems.firstObject;
+	if(!item)
+		return;
+
+	BOOL collapsed = [NSUserDefaults.standardUserDefaults boolForKey:kUserDefaultsProjectSidebarCollapsedKey];
+	if(item.collapsed == collapsed)
+	{
+		[self refreshTabBarCollapsed];
+		return;
+	}
+
+	self.suppressSidebarWidthSave = YES;
+	item.collapsed = collapsed;
+	self.suppressSidebarWidthSave = NO;
+	[self refreshTabBarCollapsed];
+}
+
+- (IBAction)toggleProjectSidebar:(id)sender
+{
+	NSSplitViewItem* item = self.projectSplitViewController.splitViewItems.firstObject;
+	if(!item)
+		return;
+
+	BOOL collapsed = !item.collapsed;
+	self.suppressSidebarCollapseApply = YES;
+	[NSUserDefaults.standardUserDefaults setBool:collapsed forKey:kUserDefaultsProjectSidebarCollapsedKey];
+	self.suppressSidebarCollapseApply = NO;
+
+	self.suppressSidebarWidthSave = YES;
+	[NSAnimationContext runAnimationGroup:^(NSAnimationContext* context){
+		context.duration = 0.2;
+		context.allowsImplicitAnimation = YES;
+		item.animator.collapsed = collapsed;
+	} completionHandler:^{
+		self.suppressSidebarWidthSave = NO;
+		if(!collapsed)
+			[self applyProjectSidebarWidth];
+		[self refreshTabBarCollapsed];
+	}];
+	[self refreshTabBarCollapsed];
 }
 
 - (CGFloat)topInsetBelowTitlebarForView:(NSView*)view
@@ -440,7 +558,7 @@ static CGFloat const kCollapsedWindowMaxHeight = 180;
 - (void)applyProjectSidebarWidth
 {
 	NSSplitView* split = self.projectSplitViewController.splitView;
-	if(!split.window || split.subviews.count < 2)
+	if(!split.window || split.subviews.count < 2 || [self isProjectSidebarCollapsed])
 		return;
 
 	CGFloat width = self.layoutView.projectSidebarWidth;
@@ -465,6 +583,9 @@ static CGFloat const kCollapsedWindowMaxHeight = 180;
 	if(split.subviews.count < 1)
 		return;
 
+	if([self isProjectSidebarCollapsed])
+		return;
+
 	CGFloat width = round(NSWidth(split.subviews[0].frame));
 	if(width < 160 || width == self.layoutView.projectSidebarWidth)
 		return;
@@ -481,6 +602,7 @@ static CGFloat const kCollapsedWindowMaxHeight = 180;
 - (void)windowDidBecomeKey:(NSNotification*)aNotification
 {
 	[self updateContentInsetsBelowTitlebar];
+	[self applySavedProjectSidebarCollapsed];
 	[self applyProjectSidebarWidth];
 	self.projectSidebarWidthApplied = YES;
 
@@ -534,8 +656,7 @@ static CGFloat const kCollapsedWindowMaxHeight = 180;
 		self.layoutView.fileBrowserOnRight = !self.layoutView.fileBrowserOnRight;
 	}
 
-	BOOL disableTabBarCollapsingKey = [NSUserDefaults.standardUserDefaults boolForKey:kUserDefaultsDisableTabBarCollapsingKey];
-	[self setTabBarCollapsed:!disableTabBarCollapsingKey && self.documents.count <= 1];
+	[self applySavedProjectSidebarCollapsed];
 }
 
 - (void)applicationDidBecomeActiveNotification:(NSNotification*)aNotification
@@ -1674,8 +1795,7 @@ static CGFloat const kCollapsedWindowMaxHeight = 180;
 			[self.tabBarView setSelectedTabIndex:MIN(_selectedTabIndex, _documents.count-1)];
 	}
 
-	BOOL disableTabBarCollapsingKey = [NSUserDefaults.standardUserDefaults boolForKey:kUserDefaultsDisableTabBarCollapsingKey];
-	[self setTabBarCollapsed:!disableTabBarCollapsingKey && self.documents.count <= 1];
+	[self refreshTabBarCollapsed];
 
 	[self updateTouchBarButtons];
 	[[self class] scheduleSessionBackup:self];

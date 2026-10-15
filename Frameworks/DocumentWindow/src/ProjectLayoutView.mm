@@ -6,6 +6,7 @@
 #import <oak/debug.h>
 
 NSString* const kUserDefaultsProjectSidebarWidthKey = @"projectSidebarWidth";
+NSString* const kUserDefaultsProjectSidebarCollapsedKey = @"projectSidebarCollapsed";
 NSString* const kUserDefaultsFileBrowserWidthKey = @"fileBrowserWidth";
 NSString* const kUserDefaultsHTMLOutputSizeKey   = @"htmlOutputSize";
 
@@ -25,6 +26,7 @@ NSString* const kUserDefaultsHTMLOutputSizeKey   = @"htmlOutputSize";
 {
 	[NSUserDefaults.standardUserDefaults registerDefaults:@{
 		kUserDefaultsProjectSidebarWidthKey: @240,
+		kUserDefaultsProjectSidebarCollapsedKey: @NO,
 		kUserDefaultsFileBrowserWidthKey: @250,
 		kUserDefaultsHTMLOutputSizeKey:   NSStringFromSize(NSMakeSize(200, 200))
 	}];
