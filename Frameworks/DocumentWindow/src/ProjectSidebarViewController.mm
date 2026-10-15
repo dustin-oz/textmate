@@ -145,6 +145,7 @@ static BOOL ProjectSidebarShouldSkipDirectory (NSString* name)
 @property (nonatomic) NSArray<NSString*>* pendingExpand;
 @property (nonatomic) BOOL suppressOpen;
 @property (nonatomic) BOOL reorderDragActive;
+@property (nonatomic) NSLayoutConstraint* contentTopConstraint;
 @end
 
 @implementation ProjectSidebarViewController
@@ -222,7 +223,15 @@ static BOOL ProjectSidebarShouldSkipDirectory (NSString* name)
 	[background addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|[header]|" options:0 metrics:nil views:views]];
 	[background addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|[separator]|" options:0 metrics:nil views:views]];
 	[background addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|[scroll]|" options:0 metrics:nil views:views]];
-	[background addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:|[header(32)][separator(1)][scroll]|" options:0 metrics:nil views:views]];
+	self.contentTopConstraint = [header.topAnchor constraintEqualToAnchor:background.topAnchor];
+	[NSLayoutConstraint activateConstraints:@[
+		self.contentTopConstraint,
+		[header.heightAnchor constraintEqualToConstant:32],
+		[separator.topAnchor constraintEqualToAnchor:header.bottomAnchor],
+		[separator.heightAnchor constraintEqualToConstant:1],
+		[scrollView.topAnchor constraintEqualToAnchor:separator.bottomAnchor],
+		[scrollView.bottomAnchor constraintEqualToAnchor:background.bottomAnchor],
+	]];
 	[header addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|-10-[title]-(>=4)-[add(24)]-6-|" options:NSLayoutFormatAlignAllCenterY metrics:nil views:views]];
 	[header addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:|[title]|" options:0 metrics:nil views:views]];
 	[addButton addConstraint:[NSLayoutConstraint constraintWithItem:addButton attribute:NSLayoutAttributeHeight relatedBy:NSLayoutRelationEqual toItem:nil attribute:NSLayoutAttributeNotAnAttribute multiplier:1 constant:24]];
@@ -232,6 +241,13 @@ static BOOL ProjectSidebarShouldSkipDirectory (NSString* name)
 	self.roots = [NSMutableArray array];
 	[self reloadFromStore];
 	[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(foldersDidChange:) name:ProjectSidebarFoldersDidChangeNotification object:nil];
+}
+
+- (void)setContentTopInset:(CGFloat)inset
+{
+	if(fabs(self.contentTopConstraint.constant - inset) < 0.5)
+		return;
+	self.contentTopConstraint.constant = MAX(0, inset);
 }
 
 - (void)dealloc

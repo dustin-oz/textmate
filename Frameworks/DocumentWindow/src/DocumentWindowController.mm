@@ -87,7 +87,13 @@ static void show_command_error (std::string const& message, oak::uuid_t const& u
 	std::map<std::string, std::string>     _documentSCMVariables;
 	std::vector<std::string>               _documentScopeAttributes; // attr.os-version, attr.untitled / attr.rev-path + kSettingsScopeAttributesKey
 }
-@property (nonatomic) NSTitlebarAccessoryViewController* titlebarViewController;
+@property (nonatomic) NSSplitViewController*      projectSplitViewController;
+@property (nonatomic) NSView*                     editorColumnView;
+@property (nonatomic) NSLayoutConstraint*         tabBarTopConstraint;
+@property (nonatomic) NSLayoutConstraint*         tabBarHeightConstraint;
+@property (nonatomic) NSVisualEffectView*         tabBarChrome;
+@property (nonatomic) BOOL                        projectSidebarWidthApplied;
+@property (nonatomic) BOOL                        suppressSidebarWidthSave;
 @property (nonatomic) ProjectLayoutView*          layoutView;
 @property (nonatomic) OakTabBarView*              tabBarView;
 @property (nonatomic) OakDocumentView*            documentView;
@@ -194,29 +200,57 @@ static NSArray* const kObservedKeyPaths = @[ @"arrayController.arrangedObjects.p
 		self.layoutView.documentView = self.documentView;
 		self.projectSidebar = [[ProjectSidebarViewController alloc] init];
 		self.projectSidebar.delegate = self;
-		self.layoutView.projectSidebarView = self.projectSidebar.view;
 
-		NSUInteger windowStyle = (NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable|NSWindowStyleMaskMiniaturizable);
+		NSUInteger windowStyle = (NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable|NSWindowStyleMaskMiniaturizable|NSWindowStyleMaskFullSizeContentView);
 		self.window = [[NSWindow alloc] initWithContentRect:[NSWindow contentRectForFrameRect:[self frameRectForNewWindow] styleMask:windowStyle] styleMask:windowStyle backing:NSBackingStoreBuffered defer:NO];
 		self.window.animationBehavior  = NSWindowAnimationBehaviorDocumentWindow;
 		self.window.collectionBehavior = NSWindowCollectionBehaviorFullScreenPrimary;
 		self.window.delegate           = self;
 		self.window.releasedWhenClosed = NO;
 
-		_titlebarViewController = [[NSTitlebarAccessoryViewController alloc] init];
-		// AppKit otherwise forces the accessory to its standard 36pt height on macOS 26+
-		// instead of the tab bar's 23pt intrinsic height.
-		_titlebarViewController.automaticallyAdjustsSize = NO;
-		self.tabBarView.frameSize = self.tabBarView.intrinsicContentSize;
-		_titlebarViewController.view = self.tabBarView;
-		_titlebarViewController.fullScreenMinHeight = NSHeight(self.tabBarView.frame);
-		[self.window addTitlebarAccessoryViewController:_titlebarViewController];
+		NSView* content = [[NSView alloc] initWithFrame:NSZeroRect];
+		self.editorColumnView = content;
+		self.tabBarChrome = [[NSVisualEffectView alloc] initWithFrame:NSZeroRect];
+		self.tabBarChrome.material = NSVisualEffectMaterialTitlebar;
+		self.tabBarChrome.blendingMode = NSVisualEffectBlendingModeBehindWindow;
+		self.tabBarChrome.state = NSVisualEffectStateFollowsWindowActiveState;
+		OakAddAutoLayoutViewsToSuperview(@[ self.tabBarChrome, self.tabBarView, self.layoutView ], content);
+		self.tabBarTopConstraint = [self.tabBarChrome.topAnchor constraintEqualToAnchor:content.topAnchor];
+		self.tabBarHeightConstraint = [self.tabBarChrome.heightAnchor constraintEqualToConstant:23];
+		self.tabBarHeightConstraint.priority = 900;
+		[NSLayoutConstraint activateConstraints:@[
+			self.tabBarTopConstraint,
+			[self.tabBarChrome.leadingAnchor constraintEqualToAnchor:content.leadingAnchor],
+			[self.tabBarChrome.trailingAnchor constraintEqualToAnchor:content.trailingAnchor],
+			self.tabBarHeightConstraint,
+			[self.tabBarView.topAnchor constraintEqualToAnchor:self.tabBarChrome.topAnchor],
+			[self.tabBarView.leadingAnchor constraintEqualToAnchor:self.tabBarChrome.leadingAnchor],
+			[self.tabBarView.trailingAnchor constraintEqualToAnchor:self.tabBarChrome.trailingAnchor],
+			[self.tabBarView.bottomAnchor constraintEqualToAnchor:self.tabBarChrome.bottomAnchor],
+			[self.layoutView.topAnchor constraintEqualToAnchor:self.tabBarChrome.bottomAnchor],
+			[self.layoutView.leadingAnchor constraintEqualToAnchor:content.leadingAnchor],
+			[self.layoutView.trailingAnchor constraintEqualToAnchor:content.trailingAnchor],
+			[self.layoutView.bottomAnchor constraintEqualToAnchor:content.bottomAnchor],
+		]];
 
-		OakAddAutoLayoutViewsToSuperview(@[ self.layoutView ], self.window.contentView);
+		NSViewController* contentController = [[NSViewController alloc] init];
+		contentController.view = content;
+
+		NSSplitViewItem* sidebarItem = [NSSplitViewItem sidebarWithViewController:self.projectSidebar];
+		sidebarItem.minimumThickness = 160;
+		sidebarItem.maximumThickness = 640;
+		sidebarItem.allowsFullHeightLayout = YES;
+		sidebarItem.preferredThicknessFraction = NSSplitViewItemUnspecifiedDimension;
+		sidebarItem.holdingPriority = NSLayoutPriorityDefaultHigh;
+		sidebarItem.canCollapse = NO;
+
+		NSSplitViewItem* contentItem = [NSSplitViewItem splitViewItemWithViewController:contentController];
+		self.projectSplitViewController = [[NSSplitViewController alloc] init];
+		self.projectSplitViewController.splitViewItems = @[ sidebarItem, contentItem ];
+		self.window.contentViewController = self.projectSplitViewController;
 		self.window.initialFirstResponder = self.textView;
 
-		[self.window.contentView addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:|[view]|" options:0 metrics:nil views:@{ @"view": self.layoutView }]];
-		[self.window.contentView addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|[view]|" options:0 metrics:nil views:@{ @"view": self.layoutView }]];
+		[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(projectSplitViewDidResize:) name:NSSplitViewDidResizeSubviewsNotification object:self.projectSplitViewController.splitView];
 
 		_arrayController = [[NSArrayController alloc] init];
 		[_arrayController bind:NSContentBinding toObject:self withKeyPath:@"documents" options:nil];
@@ -346,8 +380,81 @@ static NSArray* const kObservedKeyPaths = @[ @"arrayController.arrangedObjects.p
 	[self.window makeKeyAndOrderFront:sender];
 }
 
+- (void)setTabBarCollapsed:(BOOL)flag
+{
+	self.tabBarHeightConstraint.constant = flag ? 0 : 23;
+	self.tabBarView.hidden = flag;
+	self.tabBarChrome.hidden = flag;
+}
+
+- (CGFloat)topInsetBelowTitlebarForView:(NSView*)view
+{
+	if(!view.window || NSHeight(view.bounds) < 1)
+		return 0;
+
+	NSRect layout = [view convertRect:view.window.contentLayoutRect fromView:nil];
+	CGFloat inset = view.isFlipped ? NSMinY(layout) : NSHeight(view.bounds) - NSMaxY(layout);
+	if(inset != inset || inset < 0 || inset > 120)
+		inset = 0;
+	return MAX(inset, view.safeAreaInsets.top);
+}
+
+- (void)updateContentInsetsBelowTitlebar
+{
+	CGFloat columnInset = [self topInsetBelowTitlebarForView:self.editorColumnView];
+	if(fabs(self.tabBarTopConstraint.constant - columnInset) >= 0.5)
+		self.tabBarTopConstraint.constant = columnInset;
+
+	[self.projectSidebar setContentTopInset:[self topInsetBelowTitlebarForView:self.projectSidebar.view]];
+}
+
+- (void)applyProjectSidebarWidth
+{
+	NSSplitView* split = self.projectSplitViewController.splitView;
+	if(!split.window || split.subviews.count < 2)
+		return;
+
+	CGFloat width = self.layoutView.projectSidebarWidth;
+	if(width < 160)
+		width = 160;
+	if(fabs(NSWidth(split.subviews[0].frame) - width) < 1)
+		return;
+
+	self.suppressSidebarWidthSave = YES;
+	[split setPosition:width ofDividerAtIndex:0];
+	self.suppressSidebarWidthSave = NO;
+}
+
+- (void)projectSplitViewDidResize:(NSNotification*)aNotification
+{
+	[self updateContentInsetsBelowTitlebar];
+
+	if(!self.projectSidebarWidthApplied || self.suppressSidebarWidthSave)
+		return;
+
+	NSSplitView* split = self.projectSplitViewController.splitView;
+	if(split.subviews.count < 1)
+		return;
+
+	CGFloat width = round(NSWidth(split.subviews[0].frame));
+	if(width < 160 || width == self.layoutView.projectSidebarWidth)
+		return;
+
+	self.layoutView.projectSidebarWidth = width;
+	[NSUserDefaults.standardUserDefaults setInteger:(NSInteger)width forKey:kUserDefaultsProjectSidebarWidthKey];
+}
+
+- (void)windowDidResize:(NSNotification*)aNotification
+{
+	[self updateContentInsetsBelowTitlebar];
+}
+
 - (void)windowDidBecomeKey:(NSNotification*)aNotification
 {
+	[self updateContentInsetsBelowTitlebar];
+	[self applyProjectSidebarWidth];
+	self.projectSidebarWidthApplied = YES;
+
 	ProjectSidebarViewController* sidebar = self.projectSidebar;
 	dispatch_async(dispatch_get_main_queue(), ^{
 		[sidebar reloadContents];
@@ -399,7 +506,7 @@ static NSArray* const kObservedKeyPaths = @[ @"arrayController.arrangedObjects.p
 	}
 
 	BOOL disableTabBarCollapsingKey = [NSUserDefaults.standardUserDefaults boolForKey:kUserDefaultsDisableTabBarCollapsingKey];
-	self.titlebarViewController.hidden = !disableTabBarCollapsingKey && self.documents.count <= 1;
+	[self setTabBarCollapsed:!disableTabBarCollapsingKey && self.documents.count <= 1];
 }
 
 - (void)applicationDidBecomeActiveNotification:(NSNotification*)aNotification
@@ -1538,7 +1645,7 @@ static NSArray* const kObservedKeyPaths = @[ @"arrayController.arrangedObjects.p
 	}
 
 	BOOL disableTabBarCollapsingKey = [NSUserDefaults.standardUserDefaults boolForKey:kUserDefaultsDisableTabBarCollapsingKey];
-	self.titlebarViewController.hidden = !disableTabBarCollapsingKey && self.documents.count <= 1;
+	[self setTabBarCollapsed:!disableTabBarCollapsingKey && self.documents.count <= 1];
 
 	[self updateTouchBarButtons];
 	[[self class] scheduleSessionBackup:self];

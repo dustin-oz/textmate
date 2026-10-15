@@ -1,5 +1,7 @@
 #import <OakTabBarView/OakTabBarView.h>
 
+extern NSString* const kUserDefaultsProjectSidebarWidthKey;
+
 @interface ProjectLayoutView : NSView
 @property (nonatomic) NSView* documentView;
 @property (nonatomic) NSView* projectSidebarView;
