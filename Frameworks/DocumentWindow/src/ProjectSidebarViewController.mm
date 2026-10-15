@@ -242,6 +242,10 @@ static BOOL ProjectSidebarShouldSkipDirectory (NSString* name)
 - (NSMenu*)contextMenu
 {
 	NSMenu* menu = [[NSMenu alloc] initWithTitle:@""];
+	NSMenuItem* reveal = [[NSMenuItem alloc] initWithTitle:@"Reveal in Finder" action:@selector(revealInFinder:) keyEquivalent:@""];
+	reveal.target = self;
+	[menu addItem:reveal];
+	[menu addItem:[NSMenuItem separatorItem]];
 	NSMenuItem* remove = [[NSMenuItem alloc] initWithTitle:@"Remove from Sidebar" action:@selector(removeFromSidebar:) keyEquivalent:@""];
 	remove.target = self;
 	[menu addItem:remove];
@@ -434,6 +438,23 @@ static BOOL ProjectSidebarShouldSkipDirectory (NSString* name)
 	}];
 }
 
+- (ProjectSidebarNode*)nodeForClickedOrSelectedRow
+{
+	NSInteger row = self.outlineView.clickedRow;
+	if(row < 0)
+		row = self.outlineView.selectedRow;
+	if(row < 0 || row >= self.outlineView.numberOfRows)
+		return nil;
+	return [self.outlineView itemAtRow:row];
+}
+
+- (IBAction)revealInFinder:(id)sender
+{
+	ProjectSidebarNode* node = [self nodeForClickedOrSelectedRow];
+	if(node.url)
+		[NSWorkspace.sharedWorkspace activateFileViewerSelectingURLs:@[ node.url ]];
+}
+
 - (IBAction)removeFromSidebar:(id)sender
 {
 	NSInteger row = self.outlineView.clickedRow;
@@ -455,6 +476,8 @@ static BOOL ProjectSidebarShouldSkipDirectory (NSString* name)
 
 - (BOOL)validateMenuItem:(NSMenuItem*)menuItem
 {
+	if(menuItem.action == @selector(revealInFinder:))
+		return [self nodeForClickedOrSelectedRow].url != nil;
 	if(menuItem.action == @selector(removeFromSidebar:))
 	{
 		NSInteger row = self.outlineView.clickedRow;

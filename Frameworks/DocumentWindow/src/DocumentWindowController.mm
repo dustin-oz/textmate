@@ -1670,6 +1670,23 @@ static NSArray* const kObservedKeyPaths = @[ @"arrayController.arrangedObjects.p
 	}
 }
 
+- (IBAction)revealTabInFinder:(id)sender
+{
+	NSMutableArray<NSURL*>* urls = [NSMutableArray array];
+	if(NSIndexSet* indexSet = [self tryObtainIndexSetFrom:sender])
+	{
+		[indexSet enumerateIndexesUsingBlock:^(NSUInteger idx, BOOL* stop){
+			if(idx < _documents.count)
+			{
+				if(NSString* path = _documents[idx].path)
+					[urls addObject:[NSURL fileURLWithPath:path]];
+			}
+		}];
+	}
+	if(urls.count)
+		[NSWorkspace.sharedWorkspace activateFileViewerSelectingURLs:urls];
+}
+
 - (NSMenu*)menuForTabBarView:(OakTabBarView*)aTabBarView
 {
 	NSInteger tabIndex = aTabBarView.tag;
@@ -1702,6 +1719,7 @@ static NSArray* const kObservedKeyPaths = @[ @"arrayController.arrangedObjects.p
 	MBMenu const items = {
 		{ @"New Tab",                  @selector(takeNewTabIndexFrom:),    .representedObject = newTabAtTab   },
 		{ @"Move Tab to New Window",   @selector(takeTabsToTearOffFrom:),  .representedObject = total > 1 ? clickedTab : [NSIndexSet indexSet] },
+		{ @"Reveal in Finder",         @selector(revealTabInFinder:),      .target = self, .representedObject = clickedTab },
 		{ /* -------- */ },
 		{ @"Close Tab",                closeSingleTabSelector,                                                                           .representedObject = clickedTab    },
 		{ @"Close Other Tabs",         @selector(takeTabsToCloseFrom:),                                                                  .representedObject = otherTabs     },
@@ -2312,6 +2330,15 @@ static NSArray* const kObservedKeyPaths = @[ @"arrayController.arrangedObjects.p
 	{
 		active = self.selectedDocument.path != nil;
 		[menuItem setDynamicTitle:active ? [NSString stringWithFormat:@"Select “%@”", self.selectedDocument.displayName] : @"Select Document"];
+	}
+	else if([menuItem action] == @selector(revealTabInFinder:))
+	{
+		active = NO;
+		if(NSIndexSet* indexSet = [self tryObtainIndexSetFrom:menuItem])
+		{
+			NSUInteger idx = indexSet.firstIndex;
+			active = idx != NSNotFound && idx < _documents.count && _documents[idx].path != nil;
+		}
 	}
 	else if([menuItem action] == @selector(goToProjectFolder:))
 		active = self.projectPath != nil;
