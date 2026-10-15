@@ -1916,6 +1916,19 @@ static NSArray* const kObservedKeyPaths = @[ @"arrayController.arrangedObjects.p
 // = OakFileBrowser =
 // ==================
 
+- (void)projectSidebar:(ProjectSidebarViewController*)sidebar didMoveURL:(NSURL*)fromURL toURL:(NSURL*)toURL
+{
+	NSString* oldPath = fromURL.path.stringByStandardizingPath;
+	NSString* newPath = toURL.path.stringByStandardizingPath;
+	if(oldPath.length == 0 || newPath.length == 0)
+		return;
+	for(OakDocument* document in self.documents)
+	{
+		if([document.path.stringByStandardizingPath isEqualToString:oldPath])
+			document.path = newPath;
+	}
+}
+
 - (void)projectSidebar:(ProjectSidebarViewController*)sidebar openURL:(NSURL*)url
 {
 	if(!url.isFileURL)

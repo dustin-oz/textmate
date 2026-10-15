@@ -2,7 +2,8 @@
 
 Added 2026-10-15. A left-hand column on every document window for folders you want to keep around. The column runs the full height of the window, and the tab bar starts at its right edge.
 
-- The folder-plus button adds a project or folder. It stays until you right-click it and choose Remove from Sidebar, or select it and press Delete. Right-click a project, folder, or file and choose Reveal in Finder to show it in Finder.
+- The header has three buttons. The folder-plus button adds an existing folder. The filled folder-plus button creates an empty folder. The document-plus button creates an empty file. If a folder or file is selected, the new item is created in that folder and its name is ready to type. Click the empty area of the list to clear the selection; the save panel then asks for a name and location. A new folder outside the sidebar is added to the sidebar. A new file outside the sidebar is added as its own row, lined up with the projects, and opened. Drag that file onto a folder to move it there. Project folders themselves still only reorder.
+- A sidebar folder stays until you right-click it and choose Remove from Sidebar, or select it and press Delete. Right-click a project, folder, or file and choose Reveal in Finder to show it in Finder.
 - Drag a top-level project up or down to change its place in the list. A gap shows the new spot. The drag never moves a project inside another project, and folders inside a project cannot be reordered. The order is saved in user defaults (`projectSidebarFolders`) and shared by every window.
 - The tree shows folders plus files TextMate can open as text (Markdown, HTML, source, and other text types). Hidden files, images, and other binaries stay out. `node_modules` and `Pods` are skipped so the list stays usable.
 - Click a file to open it in the current window. Option-click replaces the other tabs, same as the existing file browser.

@@ -18,9 +18,7 @@ static NSString* const ProjectSidebarDragType = @"com.macromates.TextMate.projec
 @implementation ProjectSidebarNode
 @end
 
-@interface ProjectSidebarCellView : NSView
-@property (nonatomic) NSImageView* iconView;
-@property (nonatomic) NSTextField* nameField;
+@interface ProjectSidebarCellView : NSTableCellView
 @end
 
 @implementation ProjectSidebarCellView
@@ -28,27 +26,38 @@ static NSString* const ProjectSidebarDragType = @"com.macromates.TextMate.projec
 {
 	if((self = [super initWithFrame:frame]))
 	{
-		_iconView = [[NSImageView alloc] initWithFrame:NSZeroRect];
-		_iconView.translatesAutoresizingMaskIntoConstraints = NO;
-		_iconView.imageScaling = NSImageScaleProportionallyDown;
-		_nameField = [NSTextField labelWithString:@""];
-		_nameField.translatesAutoresizingMaskIntoConstraints = NO;
-		_nameField.lineBreakMode = NSLineBreakByTruncatingMiddle;
-		[_nameField setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow forOrientation:NSLayoutConstraintOrientationHorizontal];
-		[self addSubview:_iconView];
-		[self addSubview:_nameField];
-		NSArray<NSLayoutConstraint*>* constraints = @[
-			[_iconView.leadingAnchor constraintEqualToAnchor:self.leadingAnchor constant:2],
-			[_iconView.centerYAnchor constraintEqualToAnchor:self.centerYAnchor],
-			[_iconView.widthAnchor constraintEqualToConstant:16],
-			[_iconView.heightAnchor constraintEqualToConstant:16],
-			[_nameField.leadingAnchor constraintEqualToAnchor:_iconView.trailingAnchor constant:4],
-			[_nameField.centerYAnchor constraintEqualToAnchor:self.centerYAnchor],
-			[_nameField.trailingAnchor constraintEqualToAnchor:self.trailingAnchor constant:-4],
-		];
-		for(NSLayoutConstraint* constraint in constraints)
-			constraint.priority = NSLayoutPriorityDefaultHigh;
-		[NSLayoutConstraint activateConstraints:constraints];
+		NSImageView* iconView = [[NSImageView alloc] initWithFrame:NSZeroRect];
+		iconView.translatesAutoresizingMaskIntoConstraints = NO;
+		iconView.imageScaling = NSImageScaleProportionallyDown;
+		NSTextField* nameField = [[NSTextField alloc] initWithFrame:NSZeroRect];
+		nameField.translatesAutoresizingMaskIntoConstraints = NO;
+		nameField.bezeled = NO;
+		nameField.drawsBackground = NO;
+		nameField.editable = YES;
+		nameField.selectable = YES;
+		nameField.lineBreakMode = NSLineBreakByTruncatingMiddle;
+		nameField.usesSingleLineMode = YES;
+		nameField.cell.scrollable = NO;
+		[nameField setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow forOrientation:NSLayoutConstraintOrientationHorizontal];
+		[nameField setContentHuggingPriority:NSLayoutPriorityDefaultLow forOrientation:NSLayoutConstraintOrientationHorizontal];
+		self.imageView = iconView;
+		self.textField = nameField;
+		[self addSubview:iconView];
+		[self addSubview:nameField];
+		// The icon position has to win. A long name used to break a weaker
+		// leading constraint and slide the icon left, so the rows looked nested.
+		NSLayoutConstraint* iconLeading = [iconView.leadingAnchor constraintEqualToAnchor:self.leadingAnchor constant:2];
+		NSLayoutConstraint* textTrailing = [nameField.trailingAnchor constraintEqualToAnchor:self.trailingAnchor constant:-4];
+		textTrailing.priority = NSLayoutPriorityDefaultHigh;
+		[NSLayoutConstraint activateConstraints:@[
+			iconLeading,
+			[iconView.centerYAnchor constraintEqualToAnchor:self.centerYAnchor],
+			[iconView.widthAnchor constraintEqualToConstant:16],
+			[iconView.heightAnchor constraintEqualToConstant:16],
+			[nameField.leadingAnchor constraintEqualToAnchor:iconView.trailingAnchor constant:4],
+			[nameField.centerYAnchor constraintEqualToAnchor:self.centerYAnchor],
+			textTrailing,
+		]];
 	}
 	return self;
 }
@@ -58,6 +67,57 @@ static NSString* const ProjectSidebarDragType = @"com.macromates.TextMate.projec
 @end
 
 @implementation ProjectSidebarOutlineView
+// A top-level file has no disclosure triangle, so the source list shifts it
+// right until it looks like a child of the project above it. Match the cell
+// of an expandable sibling at the same level instead.
+- (NSRect)frameOfCellAtColumn:(NSInteger)column row:(NSInteger)row
+{
+	NSRect frame = [super frameOfCellAtColumn:column row:row];
+	if(column != 0)
+		return frame;
+
+	id item = [self itemAtRow:row];
+	if(!item || [self isExpandable:item])
+		return frame;
+
+	id parent = [self parentForItem:item];
+	for(NSInteger other = 0; other < self.numberOfRows; ++other)
+	{
+		if(other == row)
+			continue;
+		id sibling = [self itemAtRow:other];
+		if(!sibling || ![self isExpandable:sibling] || [self parentForItem:sibling] != parent)
+			continue;
+
+		NSRect siblingFrame = [super frameOfCellAtColumn:column row:other];
+		CGFloat shift = frame.origin.x - siblingFrame.origin.x;
+		if(shift > 0.5)
+		{
+			frame.origin.x -= shift;
+			frame.size.width += shift;
+		}
+		break;
+	}
+	return frame;
+}
+
+- (void)setFrameSize:(NSSize)newSize
+{
+	NSSize visible = self.enclosingScrollView.contentView.bounds.size;
+	if(newSize.height < visible.height)
+		newSize.height = visible.height;
+	[super setFrameSize:newSize];
+}
+
+- (void)mouseDown:(NSEvent*)event
+{
+	NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
+	if([self rowAtPoint:point] < 0)
+		[self deselectAll:nil];
+	else
+		[super mouseDown:event];
+}
+
 - (void)keyDown:(NSEvent*)event
 {
 	NSString* chars = event.charactersIgnoringModifiers;
@@ -138,11 +198,31 @@ static BOOL ProjectSidebarShouldSkipDirectory (NSString* name)
 	return [skip containsObject:name];
 }
 
-@interface ProjectSidebarViewController () <NSOutlineViewDataSource, NSOutlineViewDelegate, NSMenuItemValidation>
+static NSURL* ProjectSidebarUniqueURL (NSURL* directory, NSString* baseName, NSString* pathExtension, BOOL isDirectory)
+{
+	NSFileManager* fileManager = NSFileManager.defaultManager;
+	for(NSUInteger index = 1; index < 1000; ++index)
+	{
+		NSString* name = index == 1 ? baseName : [NSString stringWithFormat:@"%@ %lu", baseName, (unsigned long)index];
+		if(pathExtension.length)
+			name = [name stringByAppendingPathExtension:pathExtension];
+		NSURL* url = [directory URLByAppendingPathComponent:name isDirectory:isDirectory];
+		if(![fileManager fileExistsAtPath:url.path])
+			return url;
+	}
+	return nil;
+}
+
+@interface ProjectSidebarViewController () <NSOutlineViewDataSource, NSOutlineViewDelegate, NSMenuItemValidation, NSOpenSavePanelDelegate, NSTextFieldDelegate>
 @property (nonatomic) NSOutlineView* outlineView;
 @property (nonatomic) NSTextField* emptyLabel;
 @property (nonatomic) NSMutableArray<ProjectSidebarNode*>* roots;
 @property (nonatomic) NSArray<NSString*>* pendingExpand;
+@property (nonatomic) NSString* pendingSelectPath;
+@property (nonatomic) NSString* pendingRenamePath;
+@property (nonatomic) NSURL* createdItemURL;
+@property (nonatomic) BOOL createdItemOpens;
+@property (nonatomic) BOOL preparedForRename;
 @property (nonatomic) BOOL suppressOpen;
 @property (nonatomic) BOOL reorderDragActive;
 @property (nonatomic) NSLayoutConstraint* contentTopConstraint;
@@ -159,13 +239,11 @@ static BOOL ProjectSidebarShouldSkipDirectory (NSString* name)
 	self.view = background;
 
 	NSTextField* title = OakCreateLabel(@"Projects", [NSFont systemFontOfSize:NSFont.smallSystemFontSize weight:NSFontWeightSemibold]);
-	NSImageSymbolConfiguration* symbol = [NSImageSymbolConfiguration configurationWithPointSize:14 weight:NSFontWeightRegular];
-	NSImage* addImage = [NSImage imageWithSystemSymbolName:@"folder.badge.plus" accessibilityDescription:@"Add Folder"];
-	addImage = [addImage imageWithSymbolConfiguration:symbol] ?: addImage;
-	NSButton* addButton = [NSButton buttonWithImage:addImage target:self action:@selector(addFolder:)];
-	addButton.bezelStyle = NSBezelStyleInline;
-	addButton.bordered = NO;
-	addButton.toolTip = @"Add Folder";
+	title.lineBreakMode = NSLineBreakByTruncatingTail;
+	[title setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow forOrientation:NSLayoutConstraintOrientationHorizontal];
+	NSButton* addButton = [self headerButtonWithSymbol:@"folder.badge.plus" action:@selector(addFolder:) tooltip:@"Add Existing Folder"];
+	NSButton* newFolderButton = [self headerButtonWithSymbol:@"folder.fill.badge.plus" action:@selector(newFolder:) tooltip:@"New Folder"];
+	NSButton* newFileButton = [self headerButtonWithSymbol:@"doc.badge.plus" action:@selector(newFile:) tooltip:@"New File"];
 
 	NSView* header = [[NSView alloc] initWithFrame:NSZeroRect];
 	NSBox* separator = [[NSBox alloc] initWithFrame:NSZeroRect];
@@ -207,15 +285,18 @@ static BOOL ProjectSidebarShouldSkipDirectory (NSString* name)
 	self.emptyLabel.textColor = NSColor.secondaryLabelColor;
 
 	title.translatesAutoresizingMaskIntoConstraints = NO;
-	addButton.translatesAutoresizingMaskIntoConstraints = NO;
 	OakAddAutoLayoutViewsToSuperview(@[ header, separator, scrollView, self.emptyLabel ], background);
 	[header addSubview:title];
 	[header addSubview:addButton];
+	[header addSubview:newFolderButton];
+	[header addSubview:newFileButton];
 
 	NSDictionary* views = @{
 		@"header": header,
 		@"title": title,
 		@"add": addButton,
+		@"newFolder": newFolderButton,
+		@"newFile": newFileButton,
 		@"separator": separator,
 		@"scroll": scrollView,
 		@"empty": self.emptyLabel,
@@ -232,9 +313,10 @@ static BOOL ProjectSidebarShouldSkipDirectory (NSString* name)
 		[scrollView.topAnchor constraintEqualToAnchor:separator.bottomAnchor],
 		[scrollView.bottomAnchor constraintEqualToAnchor:background.bottomAnchor],
 	]];
-	[header addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|-10-[title]-(>=4)-[add(24)]-6-|" options:NSLayoutFormatAlignAllCenterY metrics:nil views:views]];
+	[header addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|-10-[title]-(>=4)-[add(24)]-4-[newFolder(24)]-4-[newFile(24)]-6-|" options:NSLayoutFormatAlignAllCenterY metrics:nil views:views]];
 	[header addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:|[title]|" options:0 metrics:nil views:views]];
-	[addButton addConstraint:[NSLayoutConstraint constraintWithItem:addButton attribute:NSLayoutAttributeHeight relatedBy:NSLayoutRelationEqual toItem:nil attribute:NSLayoutAttributeNotAnAttribute multiplier:1 constant:24]];
+	for(NSButton* button in @[ addButton, newFolderButton, newFileButton ])
+		[button addConstraint:[NSLayoutConstraint constraintWithItem:button attribute:NSLayoutAttributeHeight relatedBy:NSLayoutRelationEqual toItem:nil attribute:NSLayoutAttributeNotAnAttribute multiplier:1 constant:24]];
 	[background addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|-12-[empty]-12-|" options:0 metrics:nil views:views]];
 	[background addConstraint:[NSLayoutConstraint constraintWithItem:self.emptyLabel attribute:NSLayoutAttributeCenterY relatedBy:NSLayoutRelationEqual toItem:scrollView attribute:NSLayoutAttributeCenterY multiplier:1 constant:0]];
 
@@ -380,7 +462,8 @@ static BOOL ProjectSidebarShouldSkipDirectory (NSString* name)
 - (void)reloadFromStore
 {
 	NSArray<NSString*>* expanded = [self expandedPaths];
-	NSString* selected = [self selectedPath];
+	NSString* selected = self.pendingSelectPath ?: [self selectedPath];
+	self.pendingSelectPath = nil;
 	[self.roots removeAllObjects];
 	for(NSString* path in ProjectSidebarFolderPaths())
 	{
@@ -404,6 +487,8 @@ static BOOL ProjectSidebarShouldSkipDirectory (NSString* name)
 			[self.outlineView expandItem:node];
 	}
 	self.pendingExpand = nil;
+	NSString* renamePath = self.pendingRenamePath;
+	self.pendingRenamePath = nil;
 	if(selected)
 	{
 		ProjectSidebarNode* node = [self nodeForPath:selected];
@@ -412,6 +497,12 @@ static BOOL ProjectSidebarShouldSkipDirectory (NSString* name)
 			[self.outlineView selectRowIndexes:[NSIndexSet indexSetWithIndex:row] byExtendingSelection:NO];
 	}
 	self.suppressOpen = NO;
+	if(renamePath)
+	{
+		dispatch_async(dispatch_get_main_queue(), ^{
+			[self beginRenameForPath:renamePath];
+		});
+	}
 }
 
 - (ProjectSidebarNode*)rootNodeForPath:(NSString*)path
@@ -419,8 +510,10 @@ static BOOL ProjectSidebarShouldSkipDirectory (NSString* name)
 	ProjectSidebarNode* node = [[ProjectSidebarNode alloc] init];
 	node.url = [NSURL fileURLWithPath:path];
 	node.name = path.lastPathComponent;
-	node.directory = YES;
-	node.missing = ![NSFileManager.defaultManager fileExistsAtPath:path];
+	BOOL isDirectory = NO;
+	BOOL exists = [NSFileManager.defaultManager fileExistsAtPath:path isDirectory:&isDirectory];
+	node.missing = !exists;
+	node.directory = exists ? isDirectory : path.pathExtension.length == 0;
 	return node;
 }
 
@@ -524,6 +617,388 @@ static BOOL ProjectSidebarShouldSkipDirectory (NSString* name)
 	return node.parent ? nil : node;
 }
 
+- (NSButton*)headerButtonWithSymbol:(NSString*)symbolName action:(SEL)action tooltip:(NSString*)tooltip
+{
+	NSImageSymbolConfiguration* symbol = [NSImageSymbolConfiguration configurationWithPointSize:14 weight:NSFontWeightRegular];
+	NSImage* image = [NSImage imageWithSystemSymbolName:symbolName accessibilityDescription:tooltip];
+	image = [image imageWithSymbolConfiguration:symbol] ?: image;
+	NSButton* button = [NSButton buttonWithImage:image target:self action:action];
+	button.bezelStyle = NSBezelStyleInline;
+	button.bordered = NO;
+	button.toolTip = tooltip;
+	button.translatesAutoresizingMaskIntoConstraints = NO;
+	[button setContentCompressionResistancePriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
+	return button;
+}
+
+- (void)addSidebarFolderPaths:(NSArray<NSString*>*)newPaths
+{
+	NSMutableArray<NSString*>* paths = [ProjectSidebarFolderPaths() mutableCopy];
+	NSMutableArray<NSString*>* added = [NSMutableArray array];
+	for(NSString* raw in newPaths)
+	{
+		NSString* path = raw.stringByStandardizingPath;
+		if(path.length == 0 || [paths containsObject:path])
+			continue;
+		[paths addObject:path];
+		[added addObject:path];
+	}
+	if(added.count == 0)
+		return;
+	self.pendingExpand = added;
+	ProjectSidebarSetFolderPaths(paths);
+}
+
+- (NSURL*)directoryForNewItems
+{
+	NSInteger row = self.outlineView.selectedRow;
+	if(row >= 0 && row < self.outlineView.numberOfRows)
+	{
+		ProjectSidebarNode* node = [self.outlineView itemAtRow:row];
+		NSURL* url = node.directory ? node.url : node.url.URLByDeletingLastPathComponent;
+		BOOL isDirectory = NO;
+		if(url.path.length && !node.missing && [NSFileManager.defaultManager fileExistsAtPath:url.path isDirectory:&isDirectory] && isDirectory)
+			return [NSURL fileURLWithPath:url.path.stringByStandardizingPath isDirectory:YES];
+	}
+	return nil;
+}
+
+- (void)presentCreateFailureForURL:(NSURL*)url
+{
+	NSError* error = [NSError errorWithDomain:NSCocoaErrorDomain code:NSFileWriteUnknownError userInfo:@{
+		NSLocalizedDescriptionKey: [NSString stringWithFormat:@"“%@” could not be created.", url.lastPathComponent],
+	}];
+	[self.view.window presentError:error];
+}
+
+- (void)beginCreatePanelWithName:(NSString*)name message:(NSString*)message completion:(void(^)(NSURL* url))completion
+{
+	NSSavePanel* panel = [NSSavePanel savePanel];
+	panel.canCreateDirectories = YES;
+	panel.showsTagField = NO;
+	panel.nameFieldStringValue = name;
+	panel.message = message;
+	panel.prompt = @"Create";
+	panel.delegate = self;
+	NSWindow* window = self.view.window;
+	void (^handler)(NSModalResponse) = ^(NSModalResponse result){
+		panel.delegate = nil;
+		if(result == NSModalResponseOK && panel.URL)
+			completion(panel.URL);
+	};
+	if(window)
+		[panel beginSheetModalForWindow:window completionHandler:handler];
+	else
+		handler([panel runModal]);
+}
+
+- (BOOL)panel:(id)sender validateURL:(NSURL*)url error:(NSError**)outError
+{
+	if([NSFileManager.defaultManager fileExistsAtPath:url.path])
+	{
+		if(outError)
+		{
+			*outError = [NSError errorWithDomain:NSCocoaErrorDomain code:NSFileWriteFileExistsError userInfo:@{
+				NSLocalizedDescriptionKey: @"An item with that name already exists.",
+			}];
+		}
+		return NO;
+	}
+	return YES;
+}
+
+- (ProjectSidebarNode*)loadedNodeForPath:(NSString*)path
+{
+	path = path.stringByStandardizingPath;
+	ProjectSidebarNode* root = [self rootContainingPath:path];
+	if(!root)
+		return nil;
+	NSString* rootPath = root.url.path.stringByStandardizingPath;
+	if([path isEqualToString:rootPath])
+		return root;
+	if(!root.children)
+		return nil;
+
+	ProjectSidebarNode* node = root;
+	NSString* relative = [path substringFromIndex:rootPath.length];
+	for(NSString* part in relative.pathComponents)
+	{
+		if(part.length == 0 || [part isEqualToString:@"/"])
+			continue;
+		if(!node.children)
+			return nil;
+		ProjectSidebarNode* child = nil;
+		for(ProjectSidebarNode* candidate in node.children)
+		{
+			if([candidate.url.lastPathComponent isEqualToString:part])
+			{
+				child = candidate;
+				break;
+			}
+		}
+		if(!child)
+			return nil;
+		node = child;
+	}
+	return node;
+}
+
+- (void)refreshDirectoryContainingPath:(NSString*)path
+{
+	NSString* directory = path.stringByStandardizingPath.stringByDeletingLastPathComponent;
+	ProjectSidebarNode* parent = [self loadedNodeForPath:directory];
+	if(!parent)
+		return;
+	parent.children = nil;
+	[self.outlineView reloadItem:parent reloadChildren:YES];
+}
+
+- (void)createItemInDirectory:(NSURL*)directory folder:(BOOL)folder
+{
+	NSURL* url = folder ? ProjectSidebarUniqueURL(directory, @"untitled folder", nil, YES) : ProjectSidebarUniqueURL(directory, @"untitled", @"txt", NO);
+	if(!url)
+		return;
+
+	NSError* error = nil;
+	BOOL created = folder ? [NSFileManager.defaultManager createDirectoryAtURL:url withIntermediateDirectories:NO attributes:nil error:&error] : [NSFileManager.defaultManager createFileAtPath:url.path contents:[NSData data] attributes:nil];
+	if(!created)
+	{
+		if(error)
+			[self.view.window presentError:error];
+		else
+			[self presentCreateFailureForURL:url];
+		return;
+	}
+
+	NSString* path = url.path.stringByStandardizingPath;
+	self.createdItemOpens = !folder;
+	if(![self rootContainingPath:path])
+	{
+		self.pendingSelectPath = path;
+		self.pendingRenamePath = path;
+		[self addSidebarFolderPaths:@[ path ]];
+		return;
+	}
+
+	[self refreshDirectoryContainingPath:path];
+	[self revealPath:path];
+	dispatch_async(dispatch_get_main_queue(), ^{
+		[self beginRenameForPath:path];
+	});
+}
+
+- (void)beginRenameForPath:(NSString*)path
+{
+	path = path.stringByStandardizingPath;
+	ProjectSidebarNode* node = [self nodeForPath:path];
+	NSInteger row = node ? [self.outlineView rowForItem:node] : -1;
+	if(row < 0)
+	{
+		if(self.createdItemOpens)
+			[self.delegate projectSidebar:self openURL:[NSURL fileURLWithPath:path]];
+		self.createdItemOpens = NO;
+		self.preparedForRename = NO;
+		return;
+	}
+
+	self.createdItemURL = node.url;
+	self.preparedForRename = YES;
+	[self.outlineView scrollRowToVisible:row];
+	NSTableCellView* cell = [self.outlineView viewAtColumn:0 row:row makeIfNecessary:YES];
+	cell.textField.editable = YES;
+	cell.textField.selectable = YES;
+	cell.textField.delegate = self;
+	[self.outlineView editColumn:0 row:row withEvent:nil select:YES];
+	if(!self.outlineView.currentEditor)
+	{
+		cell.textField.editable = NO;
+		cell.textField.selectable = NO;
+		self.preparedForRename = NO;
+		NSURL* url = self.createdItemURL;
+		BOOL open = self.createdItemOpens;
+		self.createdItemURL = nil;
+		self.createdItemOpens = NO;
+		if(open)
+			[self.delegate projectSidebar:self openURL:url];
+		return;
+	}
+
+	if([self.outlineView.currentEditor isKindOfClass:NSTextView.class])
+	{
+		NSTextView* editor = (NSTextView*)self.outlineView.currentEditor;
+		NSRange extension = [editor.string rangeOfString:@"." options:NSBackwardsSearch];
+		if(extension.location != NSNotFound && extension.location > 0)
+			[editor setSelectedRange:NSMakeRange(0, extension.location)];
+	}
+}
+
+- (BOOL)outlineView:(NSOutlineView*)outlineView shouldEditTableColumn:(NSTableColumn*)tableColumn item:(id)item
+{
+	ProjectSidebarNode* node = item;
+	return self.preparedForRename && self.createdItemURL && [node.url.path.stringByStandardizingPath isEqualToString:self.createdItemURL.path.stringByStandardizingPath];
+}
+
+- (BOOL)control:(NSControl*)control textShouldEndEditing:(NSText*)fieldEditor
+{
+	if(self.createdItemURL)
+		[self finishCreatedItemWithName:fieldEditor.string];
+	return YES;
+}
+
+- (void)controlTextDidEndEditing:(NSNotification*)notification
+{
+	if(!self.createdItemURL)
+		return;
+	NSText* editor = notification.userInfo[@"NSFieldEditor"];
+	NSString* name = [editor isKindOfClass:NSText.class] ? editor.string : self.createdItemURL.lastPathComponent;
+	[self finishCreatedItemWithName:name];
+}
+
+- (BOOL)replaceSidebarPath:(NSString*)from withPath:(NSString*)to
+{
+	NSString* oldPath = from.stringByStandardizingPath;
+	NSString* newPath = to.stringByStandardizingPath;
+	NSMutableArray<NSString*>* paths = [ProjectSidebarFolderPaths() mutableCopy];
+	NSUInteger index = [paths indexOfObject:oldPath];
+	if(index == NSNotFound)
+		return NO;
+	paths[index] = newPath;
+	self.pendingSelectPath = newPath;
+	self.pendingExpand = @[ newPath ];
+	ProjectSidebarSetFolderPaths(paths);
+	return YES;
+}
+
+- (NSURL*)renameCreatedItemAtURL:(NSURL*)url toName:(NSString*)name
+{
+	name = [name stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+	if(name.length == 0 || [name isEqualToString:url.lastPathComponent] || [name containsString:@"/"] || [name isEqualToString:@"."] || [name isEqualToString:@".."])
+		return url;
+
+	BOOL isDirectory = NO;
+	[NSFileManager.defaultManager fileExistsAtPath:url.path isDirectory:&isDirectory];
+	NSURL* destination = [url.URLByDeletingLastPathComponent URLByAppendingPathComponent:name isDirectory:isDirectory];
+	if([NSFileManager.defaultManager fileExistsAtPath:destination.path])
+	{
+		NSError* error = [NSError errorWithDomain:NSCocoaErrorDomain code:NSFileWriteFileExistsError userInfo:@{
+			NSLocalizedDescriptionKey: @"An item with that name already exists.",
+		}];
+		[self.view.window presentError:error];
+		return url;
+	}
+
+	NSError* error = nil;
+	if(![NSFileManager.defaultManager moveItemAtURL:url toURL:destination error:&error])
+	{
+		[self.view.window presentError:error];
+		return url;
+	}
+	[self replaceSidebarPath:url.path withPath:destination.path];
+	return destination;
+}
+
+- (void)showFinishedItemAtURL:(NSURL*)url open:(BOOL)open refresh:(BOOL)refresh
+{
+	NSString* path = url.path.stringByStandardizingPath;
+	if([ProjectSidebarFolderPaths() containsObject:path])
+	{
+		if(refresh)
+			self.pendingSelectPath = path;
+		else if(ProjectSidebarNode* node = [self nodeForPath:path])
+			[self.outlineView reloadItem:node];
+		if(open)
+			[self.delegate projectSidebar:self openURL:url];
+		return;
+	}
+
+	if(refresh)
+		[self refreshDirectoryContainingPath:path];
+	if(open)
+		[self.delegate projectSidebar:self openURL:url];
+	else if(refresh)
+		[self revealPath:path];
+	else if(ProjectSidebarNode* node = [self nodeForPath:path])
+		[self.outlineView reloadItem:node];
+}
+
+- (void)finishCreatedItemWithName:(NSString*)name
+{
+	if(!self.createdItemURL)
+		return;
+	NSURL* url = self.createdItemURL;
+	BOOL open = self.createdItemOpens;
+	self.createdItemURL = nil;
+	self.createdItemOpens = NO;
+	self.preparedForRename = NO;
+	dispatch_async(dispatch_get_main_queue(), ^{
+		NSURL* finalURL = [self renameCreatedItemAtURL:url toName:name ?: @""];
+		BOOL changed = ![finalURL.path.stringByStandardizingPath isEqualToString:url.path.stringByStandardizingPath];
+		[self showFinishedItemAtURL:finalURL open:open refresh:changed];
+	});
+}
+
+- (IBAction)newFolder:(id)sender
+{
+	NSURL* directory = [self directoryForNewItems];
+	if(!directory)
+	{
+		[self beginCreatePanelWithName:@"untitled folder" message:@"Choose a name and location for the new folder. It will be added to the sidebar." completion:^(NSURL* url){
+			NSError* error = nil;
+			if(![NSFileManager.defaultManager createDirectoryAtURL:url withIntermediateDirectories:NO attributes:nil error:&error])
+			{
+				[self.view.window presentError:error];
+				return;
+			}
+			NSString* path = url.path.stringByStandardizingPath;
+			if([self rootContainingPath:path])
+			{
+				[self refreshDirectoryContainingPath:path];
+				[self revealPath:path];
+			}
+			else
+			{
+				[self addSidebarFolderPaths:@[ path ]];
+			}
+		}];
+		return;
+	}
+	[self createItemInDirectory:directory folder:YES];
+}
+
+- (IBAction)newFile:(id)sender
+{
+	NSURL* directory = [self directoryForNewItems];
+	if(!directory)
+	{
+		[self beginCreatePanelWithName:@"untitled.txt" message:@"Choose a name and location for the new file." completion:^(NSURL* url){
+			if(![NSFileManager.defaultManager createFileAtPath:url.path contents:[NSData data] attributes:nil])
+			{
+				[self presentCreateFailureForURL:url];
+				return;
+			}
+			[self showCreatedFileAtURL:url];
+		}];
+		return;
+	}
+	[self createItemInDirectory:directory folder:NO];
+}
+
+- (void)showCreatedFileAtURL:(NSURL*)url
+{
+	NSString* path = url.path.stringByStandardizingPath;
+	if([self rootContainingPath:path])
+	{
+		[self refreshDirectoryContainingPath:path];
+		[self revealPath:path];
+	}
+	else
+	{
+		self.pendingSelectPath = path;
+		[self addSidebarFolderPaths:@[ path ]];
+	}
+	[self.delegate projectSidebar:self openURL:url];
+}
+
 - (IBAction)addFolder:(id)sender
 {
 	NSOpenPanel* panel = [NSOpenPanel openPanel];
@@ -535,21 +1010,13 @@ static BOOL ProjectSidebarShouldSkipDirectory (NSString* name)
 	[panel beginSheetModalForWindow:self.view.window completionHandler:^(NSModalResponse result){
 		if(result != NSModalResponseOK)
 			return;
-
-		NSMutableArray<NSString*>* paths = [ProjectSidebarFolderPaths() mutableCopy];
-		NSMutableArray<NSString*>* added = [NSMutableArray array];
+		NSMutableArray<NSString*>* paths = [NSMutableArray array];
 		for(NSURL* url in panel.URLs)
 		{
-			NSString* path = url.path.stringByStandardizingPath;
-			if(path.length == 0 || [paths containsObject:path])
-				continue;
-			[paths addObject:path];
-			[added addObject:path];
+			if(url.path.length)
+				[paths addObject:url.path];
 		}
-		if(added.count == 0)
-			return;
-		self.pendingExpand = added;
-		ProjectSidebarSetFolderPaths(paths);
+		[self addSidebarFolderPaths:paths];
 	}];
 }
 
@@ -663,10 +1130,14 @@ static BOOL ProjectSidebarShouldSkipDirectory (NSString* name)
 		cell.identifier = @"ProjectCell";
 	}
 
-	cell.nameField.stringValue = node.name ?: @"";
-	cell.nameField.font = node.parent ? [NSFont systemFontOfSize:NSFont.smallSystemFontSize] : [NSFont systemFontOfSize:NSFont.smallSystemFontSize weight:NSFontWeightSemibold];
-	cell.nameField.textColor = node.missing ? NSColor.secondaryLabelColor : NSColor.labelColor;
-	cell.iconView.image = [NSWorkspace.sharedWorkspace iconForFile:node.url.path];
+	cell.textField.stringValue = node.name ?: @"";
+	BOOL fileRow = node.parent || !node.directory;
+	cell.textField.font = fileRow ? [NSFont systemFontOfSize:NSFont.smallSystemFontSize] : [NSFont systemFontOfSize:NSFont.smallSystemFontSize weight:NSFontWeightSemibold];
+	cell.textField.textColor = node.missing ? NSColor.secondaryLabelColor : NSColor.labelColor;
+	cell.textField.editable = NO;
+	cell.textField.selectable = NO;
+	cell.textField.delegate = self;
+	cell.imageView.image = [NSWorkspace.sharedWorkspace iconForFile:node.url.path];
 	cell.toolTip = node.parent ? nil : node.url.path;
 	return cell;
 }
@@ -674,7 +1145,7 @@ static BOOL ProjectSidebarShouldSkipDirectory (NSString* name)
 - (id<NSPasteboardWriting>)outlineView:(NSOutlineView*)outlineView pasteboardWriterForItem:(id)item
 {
 	ProjectSidebarNode* node = item;
-	if(node.parent)
+	if(node.missing || (node.directory && node.parent))
 		return nil;
 	NSPasteboardItem* pasteboardItem = [[NSPasteboardItem alloc] init];
 	[pasteboardItem setString:node.url.path forType:ProjectSidebarDragType];
@@ -727,22 +1198,10 @@ static BOOL ProjectSidebarShouldSkipDirectory (NSString* name)
 	return count;
 }
 
-- (NSDragOperation)outlineView:(NSOutlineView*)outlineView validateDrop:(id<NSDraggingInfo>)info proposedItem:(id)item proposedChildIndex:(NSInteger)index
-{
-	if(![[info.draggingPasteboard types] containsObject:ProjectSidebarDragType])
-		return NSDragOperationNone;
-
-	NSPoint point = [outlineView convertPoint:info.draggingLocation fromView:nil];
-	NSInteger insertion = [self rootInsertionIndexForPoint:point];
-	if(item != nil || index != insertion)
-		[outlineView setDropItem:nil dropChildIndex:insertion];
-	return NSDragOperationMove;
-}
-
-- (BOOL)outlineView:(NSOutlineView*)outlineView acceptDrop:(id<NSDraggingInfo>)info item:(id)item childIndex:(NSInteger)index
+- (NSArray<NSString*>*)pathsFromDraggingInfo:(id<NSDraggingInfo>)info
 {
 	NSMutableArray<NSString*>* moving = [NSMutableArray array];
-	[info enumerateDraggingItemsWithOptions:0 forView:outlineView classes:@[ NSPasteboardItem.class ] searchOptions:@{} usingBlock:^(NSDraggingItem* draggingItem, NSInteger idx, BOOL* stop){
+	[info enumerateDraggingItemsWithOptions:0 forView:self.outlineView classes:@[ NSPasteboardItem.class ] searchOptions:@{} usingBlock:^(NSDraggingItem* draggingItem, NSInteger idx, BOOL* stop){
 		NSString* path = [((NSPasteboardItem*)draggingItem.item) stringForType:ProjectSidebarDragType];
 		if(path)
 			[moving addObject:path];
@@ -753,7 +1212,117 @@ static BOOL ProjectSidebarShouldSkipDirectory (NSString* name)
 		if(path.length)
 			[moving addObject:path];
 	}
-	if(moving.count == 0 || item != nil)
+	return moving;
+}
+
+- (ProjectSidebarNode*)folderForDropOnNode:(ProjectSidebarNode*)node
+{
+	if(node.directory)
+		return node;
+	return node.parent.directory ? node.parent : nil;
+}
+
+- (BOOL)moveSidebarFilePaths:(NSArray<NSString*>*)paths intoFolder:(ProjectSidebarNode*)folder
+{
+	if(!folder.directory || folder.missing || paths.count == 0)
+		return NO;
+
+	NSString* destinationDir = folder.url.path.stringByStandardizingPath;
+	NSMutableArray<NSString*>* roots = [ProjectSidebarFolderPaths() mutableCopy];
+	NSString* movedPath = nil;
+	for(NSString* raw in paths)
+	{
+		NSString* path = raw.stringByStandardizingPath;
+		BOOL isDirectory = NO;
+		if(![NSFileManager.defaultManager fileExistsAtPath:path isDirectory:&isDirectory] || isDirectory)
+			continue;
+		if([path.stringByDeletingLastPathComponent isEqualToString:destinationDir])
+			continue;
+
+		NSURL* destination = [NSURL fileURLWithPath:[destinationDir stringByAppendingPathComponent:path.lastPathComponent]];
+		if([NSFileManager.defaultManager fileExistsAtPath:destination.path])
+		{
+			NSError* error = [NSError errorWithDomain:NSCocoaErrorDomain code:NSFileWriteFileExistsError userInfo:@{
+				NSLocalizedDescriptionKey: [NSString stringWithFormat:@"“%@” already exists in that folder.", destination.lastPathComponent],
+			}];
+			[self.view.window presentError:error];
+			return NO;
+		}
+
+		NSError* error = nil;
+		if(![NSFileManager.defaultManager moveItemAtURL:[NSURL fileURLWithPath:path] toURL:destination error:&error])
+		{
+			[self.view.window presentError:error];
+			return NO;
+		}
+		if([self.delegate respondsToSelector:@selector(projectSidebar:didMoveURL:toURL:)])
+			[self.delegate projectSidebar:self didMoveURL:[NSURL fileURLWithPath:path] toURL:destination];
+
+		NSUInteger index = [roots indexOfObject:path];
+		if(index != NSNotFound)
+			[roots removeObjectAtIndex:index];
+		movedPath = destination.path.stringByStandardizingPath;
+		ProjectSidebarNode* source = [self loadedNodeForPath:path.stringByDeletingLastPathComponent];
+		if(source && source != folder)
+			source.children = nil;
+	}
+	if(!movedPath)
+		return NO;
+
+	self.pendingExpand = @[ destinationDir ];
+	self.pendingSelectPath = movedPath;
+	if(![roots isEqualToArray:ProjectSidebarFolderPaths()])
+		ProjectSidebarSetFolderPaths(roots);
+	else
+	{
+		folder.children = nil;
+		[self.outlineView reloadData];
+		[self.outlineView expandItem:folder];
+		[self revealPath:movedPath];
+	}
+	return YES;
+}
+
+- (NSDragOperation)outlineView:(NSOutlineView*)outlineView validateDrop:(id<NSDraggingInfo>)info proposedItem:(id)item proposedChildIndex:(NSInteger)index
+{
+	if(![[info.draggingPasteboard types] containsObject:ProjectSidebarDragType])
+		return NSDragOperationNone;
+
+	NSString* draggedPath = [info.draggingPasteboard stringForType:ProjectSidebarDragType].stringByStandardizingPath;
+	BOOL draggedIsDirectory = NO;
+	BOOL draggedExists = draggedPath.length && [NSFileManager.defaultManager fileExistsAtPath:draggedPath isDirectory:&draggedIsDirectory];
+	NSPoint point = [outlineView convertPoint:info.draggingLocation fromView:nil];
+	if(draggedExists && !draggedIsDirectory)
+	{
+		NSInteger row = [outlineView rowAtPoint:point];
+		ProjectSidebarNode* node = row >= 0 ? [outlineView itemAtRow:row] : nil;
+		ProjectSidebarNode* folder = [self folderForDropOnNode:node];
+		NSString* destinationDir = folder.url.path.stringByStandardizingPath;
+		if(folder && destinationDir.length && ![draggedPath.stringByDeletingLastPathComponent isEqualToString:destinationDir])
+		{
+			if(item != folder || index != NSOutlineViewDropOnItemIndex)
+				[outlineView setDropItem:folder dropChildIndex:NSOutlineViewDropOnItemIndex];
+			return NSDragOperationMove;
+		}
+	}
+
+	if(![ProjectSidebarFolderPaths() containsObject:draggedPath])
+		return NSDragOperationNone;
+
+	NSInteger insertion = [self rootInsertionIndexForPoint:point];
+	if(item != nil || index != insertion)
+		[outlineView setDropItem:nil dropChildIndex:insertion];
+	return NSDragOperationMove;
+}
+
+- (BOOL)outlineView:(NSOutlineView*)outlineView acceptDrop:(id<NSDraggingInfo>)info item:(id)item childIndex:(NSInteger)index
+{
+	NSArray<NSString*>* moving = [self pathsFromDraggingInfo:info];
+	if(moving.count == 0)
+		return NO;
+	if([item isKindOfClass:ProjectSidebarNode.class] && ((ProjectSidebarNode*)item).directory && index == NSOutlineViewDropOnItemIndex)
+		return [self moveSidebarFilePaths:moving intoFolder:item];
+	if(item != nil)
 		return NO;
 
 	NSMutableArray<NSString*>* paths = [ProjectSidebarFolderPaths() mutableCopy];
