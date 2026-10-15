@@ -144,6 +144,7 @@ static BOOL ProjectSidebarShouldSkipDirectory (NSString* name)
 @property (nonatomic) NSMutableArray<ProjectSidebarNode*>* roots;
 @property (nonatomic) NSArray<NSString*>* pendingExpand;
 @property (nonatomic) BOOL suppressOpen;
+@property (nonatomic) BOOL reorderDragActive;
 @end
 
 @implementation ProjectSidebarViewController
@@ -179,6 +180,8 @@ static BOOL ProjectSidebarShouldSkipDirectory (NSString* name)
 	self.outlineView.rowSizeStyle = NSTableViewRowSizeStyleSmall;
 	self.outlineView.rowHeight = 22;
 	self.outlineView.style = NSTableViewStyleSourceList;
+	self.outlineView.draggingDestinationFeedbackStyle = NSTableViewDraggingDestinationFeedbackStyleGap;
+	self.outlineView.verticalMotionCanBeginDrag = YES;
 	self.outlineView.backgroundColor = NSColor.clearColor;
 	self.outlineView.floatsGroupRows = NO;
 	self.outlineView.target = self;
@@ -540,10 +543,61 @@ static BOOL ProjectSidebarShouldSkipDirectory (NSString* name)
 	return pasteboardItem;
 }
 
+- (void)outlineView:(NSOutlineView*)outlineView draggingSession:(NSDraggingSession*)session willBeginAtPoint:(NSPoint)screenPoint forItems:(NSArray*)draggedItems
+{
+	self.reorderDragActive = YES;
+}
+
+- (void)outlineView:(NSOutlineView*)outlineView draggingSession:(NSDraggingSession*)session endedAtPoint:(NSPoint)screenPoint operation:(NSDragOperation)operation
+{
+	self.reorderDragActive = NO;
+}
+
+- (BOOL)outlineView:(NSOutlineView*)outlineView shouldExpandItem:(id)item
+{
+	return !self.reorderDragActive;
+}
+
+// The whole block for a project, including its open contents, is one reorder target.
+// The top half inserts above that project. The bottom half inserts below it.
+- (NSInteger)rootInsertionIndexForPoint:(NSPoint)point
+{
+	NSInteger count = (NSInteger)self.roots.count;
+	for(NSInteger index = 0; index < count; ++index)
+	{
+		NSInteger headerRow = [self.outlineView rowForItem:self.roots[index]];
+		if(headerRow < 0)
+			continue;
+
+		NSInteger endRow = headerRow;
+		if(index + 1 < count)
+		{
+			NSInteger nextHeader = [self.outlineView rowForItem:self.roots[index + 1]];
+			if(nextHeader > headerRow)
+				endRow = nextHeader - 1;
+		}
+		else
+		{
+			endRow = self.outlineView.numberOfRows - 1;
+		}
+
+		NSRect top = [self.outlineView rectOfRow:headerRow];
+		NSRect bottom = [self.outlineView rectOfRow:endRow];
+		if(point.y < (NSMinY(top) + NSMaxY(bottom)) / 2.0)
+			return index;
+	}
+	return count;
+}
+
 - (NSDragOperation)outlineView:(NSOutlineView*)outlineView validateDrop:(id<NSDraggingInfo>)info proposedItem:(id)item proposedChildIndex:(NSInteger)index
 {
-	if(item || index == NSOutlineViewDropOnItemIndex)
+	if(![[info.draggingPasteboard types] containsObject:ProjectSidebarDragType])
 		return NSDragOperationNone;
+
+	NSPoint point = [outlineView convertPoint:info.draggingLocation fromView:nil];
+	NSInteger insertion = [self rootInsertionIndexForPoint:point];
+	if(item != nil || index != insertion)
+		[outlineView setDropItem:nil dropChildIndex:insertion];
 	return NSDragOperationMove;
 }
 
@@ -556,6 +610,12 @@ static BOOL ProjectSidebarShouldSkipDirectory (NSString* name)
 			[moving addObject:path];
 	}];
 	if(moving.count == 0)
+	{
+		NSString* path = [info.draggingPasteboard stringForType:ProjectSidebarDragType];
+		if(path.length)
+			[moving addObject:path];
+	}
+	if(moving.count == 0 || item != nil)
 		return NO;
 
 	NSMutableArray<NSString*>* paths = [ProjectSidebarFolderPaths() mutableCopy];
@@ -572,7 +632,8 @@ static BOOL ProjectSidebarShouldSkipDirectory (NSString* name)
 	insert = MAX(0, MIN(insert, (NSInteger)paths.count));
 	for(NSString* path in moving)
 		[paths insertObject:path atIndex:insert++];
-	ProjectSidebarSetFolderPaths(paths);
+	if(![paths isEqualToArray:ProjectSidebarFolderPaths()])
+		ProjectSidebarSetFolderPaths(paths);
 	return YES;
 }
 
