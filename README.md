@@ -1,20 +1,21 @@
 # TextMate
 
-## Download
+This is a personal fork of TextMate. Build it from source. There is no Homebrew cask and no downloadable release.
 
-Install this fork via Homebrew:
+## Install
+
+You need macOS 14.0 or later, a full Xcode install, [ninja][], and [cmake][] 3.21 or newer.
 
 ```sh
-brew install --cask tectiv3/textmate/textmate
+brew install ninja cmake
+git clone --recursive https://github.com/dustin-oz/textmate.git
+cd textmate
+make release
 ```
 
-Or download a signed and notarized build from the [releases page](https://github.com/tectiv3/textmate/releases).
+The app is `build-release/Applications/TextMate/TextMate.app`. Copy that bundle into `/Applications` or `~/Applications` if you want it beside your other apps.
 
-The official (upstream) TextMate is available [from macromates.com](https://macromates.com/download).
-
-## Feedback
-
-Use [GitHub Issues](https://github.com/tectiv3/textmate/issues) for bug reports and feature requests.
+The official TextMate is a different app: [macromates.com](https://macromates.com/download).
 
 ## Screenshot
 
@@ -82,9 +83,9 @@ brew install ninja cmake
 ## Setup
 
 ```sh
-git clone --recursive https://github.com/tectiv3/textmate.git
+git clone --recursive https://github.com/dustin-oz/textmate.git
 cd textmate
-make run
+make release
 ```
 
 If you already cloned without `--recursive`, fetch the submodules separately:
