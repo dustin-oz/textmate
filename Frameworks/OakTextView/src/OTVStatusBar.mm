@@ -77,6 +77,9 @@ static NSButton* OakCreateImageToggleButton (NSImage* image, NSString* accessibi
 @property (nonatomic) NSButton*      plainTextPresetButton;
 @property (nonatomic) NSButton*      markdownPresetButton;
 @property (nonatomic) NSButton*      htmlPresetButton;
+@property (nonatomic) NSButton*      markdownPreviewButton;
+@property (nonatomic) NSLayoutConstraint* markdownPreviewGap;
+@property (nonatomic) NSLayoutConstraint* markdownPreviewWidth;
 @property (nonatomic) NSButton*      macroRecordingButton;
 @property (nonatomic) NSArray<NSLayoutConstraint*>* lspVisibleConstraints;
 @property (nonatomic) NSArray<NSLayoutConstraint*>* lspHiddenConstraints;
@@ -108,7 +111,7 @@ static NSButton* OakCreateImageToggleButton (NSImage* image, NSString* accessibi
 		self.bundleItemsPopUp             = OakCreateStatusBarPopUpButton(nil, @"Bundle Item");
 		self.symbolPopUp                  = OakCreateStatusBarPopUpButton(@"", @"Symbol");
 		self.plainTextPresetButton       = OakCreateLanguagePresetButton(@"Plain Text", @"text.plain", NO);
-		self.markdownPresetButton         = OakCreateLanguagePresetButton(@"Markdown", @"text.html.markdown", YES);
+		self.markdownPresetButton         = OakCreateLanguagePresetButton(@"Markdown", @"text.html.markdown", NO);
 		self.htmlPresetButton             = OakCreateLanguagePresetButton(@"HTML", @"text.html.basic", NO);
 		self.macroRecordingButton         = OakCreateImageToggleButton(recordMacroImage, @"Record a macro");
 		self.macroRecordingButton.action  = @selector(toggleMacroRecording:);
@@ -148,9 +151,24 @@ static NSButton* OakCreateImageToggleButton (NSImage* image, NSString* accessibi
 		NSView* languagePresets = [NSView new];
 		[languagePresets setContentHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
 		[languagePresets setContentCompressionResistancePriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
-		OakAddAutoLayoutViewsToSuperview(@[ self.plainTextPresetButton, self.markdownPresetButton, self.htmlPresetButton ], languagePresets);
-		[languagePresets addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|[plain]-10-[markdown]-10-[html]|" options:NSLayoutFormatAlignAllCenterY metrics:nil views:@{ @"plain": self.plainTextPresetButton, @"markdown": self.markdownPresetButton, @"html": self.htmlPresetButton }]];
+		self.markdownPreviewButton = [NSButton buttonWithTitle:@"Preview" target:nil action:@selector(toggleMarkdownPreview:)];
+		self.markdownPreviewButton.font = OakStatusBarFont();
+		self.markdownPreviewButton.bordered = NO;
+		self.markdownPreviewButton.hidden = YES;
+		self.markdownPreviewButton.toolTip = @"Show the Markdown preview in this window";
+		self.markdownPreviewButton.accessibilityLabel = self.markdownPreviewButton.toolTip;
+		[self.markdownPreviewButton setContentHuggingPriority:NSLayoutPriorityDefaultHigh forOrientation:NSLayoutConstraintOrientationHorizontal];
+		[self.markdownPreviewButton setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow forOrientation:NSLayoutConstraintOrientationHorizontal];
+
+		OakAddAutoLayoutViewsToSuperview(@[ self.plainTextPresetButton, self.markdownPresetButton, self.htmlPresetButton, self.markdownPreviewButton ], languagePresets);
+		[languagePresets addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|[plain]-10-[markdown]-10-[html]" options:NSLayoutFormatAlignAllCenterY metrics:nil views:@{ @"plain": self.plainTextPresetButton, @"markdown": self.markdownPresetButton, @"html": self.htmlPresetButton, @"preview": self.markdownPreviewButton }]];
 		[languagePresets addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:|[plain]|" options:0 metrics:nil views:@{ @"plain": self.plainTextPresetButton }]];
+		self.markdownPreviewGap = [self.markdownPreviewButton.leadingAnchor constraintEqualToAnchor:self.htmlPresetButton.trailingAnchor constant:0];
+		self.markdownPreviewGap.active = YES;
+		[self.markdownPreviewButton.trailingAnchor constraintEqualToAnchor:languagePresets.trailingAnchor].active = YES;
+		[self.markdownPreviewButton.centerYAnchor constraintEqualToAnchor:self.plainTextPresetButton.centerYAnchor].active = YES;
+		self.markdownPreviewWidth = [self.markdownPreviewButton.widthAnchor constraintEqualToConstant:0];
+		self.markdownPreviewWidth.active = YES;
 
 		NSView* dividerFive  = OakCreateNSBoxSeparator();
 		NSView* dividerSix   = OakCreateNSBoxSeparator();
@@ -276,7 +294,7 @@ static NSButton* OakCreateImageToggleButton (NSImage* image, NSString* accessibi
 - (void)setTarget:(id)newTarget
 {
 	_target = newTarget;
-	for(NSButton* button in @[ self.plainTextPresetButton, self.markdownPresetButton, self.htmlPresetButton ])
+	for(NSButton* button in @[ self.plainTextPresetButton, self.markdownPresetButton, self.htmlPresetButton, self.markdownPreviewButton ])
 		button.target = newTarget;
 	[self setupTabSizeMenu:self];
 }
@@ -384,6 +402,26 @@ static NSButton* OakCreateImageToggleButton (NSImage* image, NSString* accessibi
 	for(auto const& item : bundles::query(bundles::kFieldGrammarScope, to_s(newFileType)))
 		self.grammarName = [NSString stringWithCxxString:item->name()];
 	[self updateLanguagePresetButtons];
+	[self setShowsMarkdownPreviewToggle:[newFileType isEqualToString:@"text.html.markdown"]];
+}
+
+- (void)setShowsMarkdownPreviewToggle:(BOOL)flag
+{
+	self.markdownPreviewButton.hidden = !flag;
+	self.markdownPreviewGap.constant = flag ? 10 : 0;
+	self.markdownPreviewWidth.active = !flag;
+}
+
+- (void)setMarkdownPreviewing:(BOOL)flag
+{
+	self.markdownPreviewButton.title = flag ? @"Edit" : @"Preview";
+	self.markdownPreviewButton.toolTip = flag ? @"Return to the editor" : @"Show the Markdown preview in this window";
+	self.markdownPreviewButton.accessibilityLabel = self.markdownPreviewButton.toolTip;
+	NSFont* font = flag ? [[NSFontManager sharedFontManager] convertFont:OakStatusBarFont() toHaveTrait:NSBoldFontMask] : OakStatusBarFont();
+	self.markdownPreviewButton.attributedTitle = [[NSAttributedString alloc] initWithString:self.markdownPreviewButton.title attributes:@{
+		NSFontAttributeName: font,
+		NSForegroundColorAttributeName: NSColor.labelColor,
+	}];
 }
 
 - (void)setRecordingTimer:(NSTimer*)aTimer

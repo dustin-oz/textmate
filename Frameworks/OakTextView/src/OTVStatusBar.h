@@ -18,6 +18,8 @@
 @property (nonatomic, getter = isRecordingMacro) BOOL recordingMacro;
 @property (nonatomic) BOOL softTabs;
 @property (nonatomic) NSUInteger tabSize;
+- (void)setShowsMarkdownPreviewToggle:(BOOL)flag;
+- (void)setMarkdownPreviewing:(BOOL)flag;
 
 @property (nonatomic, weak) id <OTVStatusBarDelegate> delegate;
 @property (nonatomic, weak) id target;

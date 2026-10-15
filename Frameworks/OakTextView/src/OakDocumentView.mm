@@ -6,6 +6,9 @@
 #import <lsp/LSPManager.h>
 #import <lsp/CopilotManager.h>
 #import "OTVStatusBar.h"
+#import "OakCommandRefresh.h"
+#import <HTMLOutput/OakHTMLOutputView.h>
+#import <OakCommand/OakCommand.h>
 #import <document/OakDocument.h>
 #import <file/type.h>
 #import <text/ctype.h>
@@ -50,6 +53,8 @@ static NSString* const kFoldingsColumnIdentifier  = @"foldings";
 }
 @property (nonatomic, readonly) OTVStatusBar* statusBar;
 @property (nonatomic) SymbolChooser* symbolChooser;
+@property (nonatomic) OakHTMLOutputView* markdownPreviewView;
+@property (nonatomic) BOOL markdownPreviewVisible;
 @property (nonatomic) NSArray* observedKeys;
 - (void)updateStyle;
 @end
@@ -138,6 +143,16 @@ static NSString* const kFoldingsColumnIdentifier  = @"foldings";
 
 	for(size_t i = 0; i < [stackedViews count]-1; ++i)
 		[self addConstraint:[NSLayoutConstraint constraintWithItem:stackedViews[i] attribute:NSLayoutAttributeBottom relatedBy:NSLayoutRelationEqual toItem:stackedViews[i+1] attribute:NSLayoutAttributeTop multiplier:1 constant:0]];
+
+	if(_markdownPreviewVisible && _markdownPreviewView.superview)
+	{
+		NSView* preview = _markdownPreviewView;
+		[self addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:|[preview]|" options:0 metrics:nil views:NSDictionaryOfVariableBindings(preview)]];
+		if(_statusBar)
+			[self addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:|[preview][_statusBar]" options:0 metrics:nil views:NSDictionaryOfVariableBindings(preview, _statusBar)]];
+		else
+			[self addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:|[preview]|" options:0 metrics:nil views:NSDictionaryOfVariableBindings(preview)]];
+	}
 
 	NSArray* array[] = { topAuxiliaryViews, bottomAuxiliaryViews };
 	for(NSArray* views : array)
@@ -279,6 +294,8 @@ static NSString* const kFoldingsColumnIdentifier  = @"foldings";
 	else if([aKeyPath isEqualToString:@"fileType"])
 	{
 		_statusBar.fileType = self.document.fileType;
+		if(_markdownPreviewVisible && ![self.document.fileType isEqualToString:@"text.html.markdown"])
+			[self setMarkdownPreviewVisible:NO];
 	}
 	else if([aKeyPath isEqualToString:@"tabSize"])
 	{
@@ -347,6 +364,9 @@ static NSString* const kFoldingsColumnIdentifier  = @"foldings";
 
 	if(oldDocument)
 		[oldDocument close];
+
+	if(_markdownPreviewVisible && [self.document.fileType isEqualToString:@"text.html.markdown"])
+		[self runMarkdownPreview];
 
 	if(aDocument)
 	{
@@ -556,12 +576,100 @@ static NSString* const kFoldingsColumnIdentifier  = @"foldings";
 		}
 	}
 
-	if([sender tag] == 1)
+}
+
+static NSString* const OakMarkdownPreviewCommandUUID = @"B52DEA16-8480-11D9-BE59-000D93B3A10E";
+
+- (void)stopMarkdownPreviewCommand
+{
+	NSUUID* uuid = [[NSUUID alloc] initWithUUIDString:OakMarkdownPreviewCommandUUID];
+	if(OakCommandRefresher* refresher = [OakCommandRefresher findRefresherForCommandUUID:uuid document:self.document window:self.window])
 	{
-		static NSString* const markdownPreviewUUID = @"B52DEA16-8480-11D9-BE59-000D93B3A10E";
-		if(bundles::item_ptr item = bundles::lookup(to_s(markdownPreviewUUID)))
-			[_textView performBundleItem:item];
+		[refresher.command terminate];
+		[refresher teardown];
 	}
+}
+
+- (void)runMarkdownPreview
+{
+	[self stopMarkdownPreviewCommand];
+	if(bundles::item_ptr item = bundles::lookup(to_s(OakMarkdownPreviewCommandUUID)))
+		[_textView performBundleItem:item];
+}
+
+- (void)setMarkdownPreviewVisible:(BOOL)flag
+{
+	if(_markdownPreviewVisible == flag)
+		return;
+
+	if(flag && ![self.document.fileType isEqualToString:@"text.html.markdown"])
+		return;
+
+	if(!flag)
+		[self stopMarkdownPreviewCommand];
+
+	_markdownPreviewVisible = flag;
+	gutterScrollView.hidden = flag;
+	gutterDividerView.hidden = flag;
+	textScrollView.hidden = flag;
+
+	if(flag)
+	{
+		if(!self.markdownPreviewView)
+			self.markdownPreviewView = [[OakHTMLOutputView alloc] initWithFrame:NSZeroRect];
+		if(!self.markdownPreviewView.superview)
+			OakAddAutoLayoutViewsToSuperview(@[ self.markdownPreviewView ], self);
+		[_statusBar setMarkdownPreviewing:YES];
+		[self setNeedsUpdateConstraints:YES];
+		[self runMarkdownPreview];
+	}
+	else
+	{
+		[self.markdownPreviewView removeFromSuperview];
+		[_statusBar setMarkdownPreviewing:NO];
+		[self setNeedsUpdateConstraints:YES];
+		[self.window makeFirstResponder:_textView];
+	}
+}
+
+- (IBAction)toggleMarkdownPreview:(id)sender
+{
+	[self setMarkdownPreviewVisible:!_markdownPreviewVisible];
+}
+
+- (OakHTMLOutputView*)htmlOutputView:(BOOL)createFlag forIdentifier:(NSUUID*)identifier
+{
+	if(_markdownPreviewVisible && identifier && [identifier.UUIDString caseInsensitiveCompare:OakMarkdownPreviewCommandUUID] == NSOrderedSame)
+		return self.markdownPreviewView;
+
+	id responder = self.nextResponder;
+	while(responder)
+	{
+		if(responder != self && [responder respondsToSelector:@selector(htmlOutputView:forIdentifier:)])
+			return [responder htmlOutputView:createFlag forIdentifier:identifier];
+		responder = [responder nextResponder];
+	}
+	return nil;
+}
+
+- (void)discardHTMLOutputView:(OakHTMLOutputView*)htmlOutputView
+{
+	if(htmlOutputView == self.markdownPreviewView)
+		return;
+
+	id responder = self.nextResponder;
+	while(responder)
+	{
+		if(responder != self && [responder respondsToSelector:@selector(discardHTMLOutputView:)])
+		{
+			[responder discardHTMLOutputView:htmlOutputView];
+			return;
+		}
+		responder = [responder nextResponder];
+	}
+
+	if(![htmlOutputView tryToPerform:@selector(toggleHTMLOutput:) with:self])
+		[htmlOutputView tryToPerform:@selector(performClose:) with:self];
 }
 
 - (void)goToSymbol:(id)sender
