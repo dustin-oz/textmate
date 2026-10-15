@@ -188,6 +188,8 @@
 	}
 
 	[super webView:webView didFinishNavigation:navigation];
+	if(self.navigationFinishedHandler)
+		self.navigationFinishedHandler();
 }
 
 - (void)webView:(WKWebView*)webView didFailProvisionalNavigation:(WKNavigation*)navigation withError:(NSError*)error

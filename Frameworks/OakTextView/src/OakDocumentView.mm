@@ -308,6 +308,8 @@ static NSString* const kFoldingsColumnIdentifier  = @"foldings";
 	else if([aKeyPath isEqualToString:@"themeUUID"])
 	{
 		[self updateStyle];
+		if(_markdownPreviewVisible)
+			[self applyMarkdownPreviewAppearance];
 	}
 }
 
@@ -616,9 +618,16 @@ static NSString* const OakMarkdownPreviewCommandUUID = @"B52DEA16-8480-11D9-BE59
 	if(flag)
 	{
 		if(!self.markdownPreviewView)
+		{
 			self.markdownPreviewView = [[OakHTMLOutputView alloc] initWithFrame:NSZeroRect];
+			__weak OakDocumentView* weakSelf = self;
+			self.markdownPreviewView.navigationFinishedHandler = ^{
+				[weakSelf applyMarkdownPreviewAppearance];
+			};
+		}
 		if(!self.markdownPreviewView.superview)
 			OakAddAutoLayoutViewsToSuperview(@[ self.markdownPreviewView ], self);
+		[self applyMarkdownPreviewAppearance];
 		[_statusBar setMarkdownPreviewing:YES];
 		[self setNeedsUpdateConstraints:YES];
 		[self runMarkdownPreview];
@@ -630,6 +639,233 @@ static NSString* const OakMarkdownPreviewCommandUUID = @"B52DEA16-8480-11D9-BE59
 		[self setNeedsUpdateConstraints:YES];
 		[self.window makeFirstResponder:_textView];
 	}
+}
+
+static NSString* OakPreviewCSSColor (CGColorRef color)
+{
+	if(!color)
+		return nil;
+	NSColor* converted = [[NSColor colorWithCGColor:color] colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
+	if(!converted)
+		return nil;
+	return [NSString stringWithFormat:@"rgba(%d, %d, %d, %.3f)",
+		(int)lrint(converted.redComponent * 255.0),
+		(int)lrint(converted.greenComponent * 255.0),
+		(int)lrint(converted.blueComponent * 255.0),
+		converted.alphaComponent];
+}
+
+static NSString* OakPreviewScopeColor (theme_ptr const& theme, char const* scopeName, NSString* fallback)
+{
+	if(theme)
+	{
+		if(NSString* color = OakPreviewCSSColor(theme->styles_for_scope(scopeName).foreground()))
+			return color;
+	}
+	return fallback;
+}
+
+static NSString* const OakMarkdownPreviewScript = @R"JS(
+(function () {
+	var style = document.getElementById('tm-editor-preview-style');
+	if (!style) {
+		style = document.createElement('style');
+		style.id = 'tm-editor-preview-style';
+		(document.head || document.documentElement).appendChild(style);
+	}
+	style.textContent = __THEME_CSS__;
+
+	var aliases = {
+		js:'c', javascript:'c', jsx:'c', ts:'c', typescript:'c', java:'c', c:'c', h:'c', cc:'c', cpp:'c', cxx:'c', hpp:'c', m:'c', mm:'c', kt:'c', php:'c', cs:'c',
+		swift:'swift', go:'go', rs:'rust', rust:'rust',
+		py:'hash', python:'hash', rb:'hash', ruby:'hash', sh:'hash', bash:'hash', zsh:'hash', shell:'hash', yml:'hash', yaml:'hash', toml:'hash', pl:'hash',
+		css:'css', html:'markup', xml:'markup', htm:'markup', svg:'markup', json:'json'
+	};
+	var words = {
+		c: 'if else for while do return break continue switch case default class struct enum typedef sizeof const static extern void int long short char bool float double true false nil self import include namespace using public private protected new this try catch throw',
+		swift: 'if else for while return break continue switch case default class struct enum protocol extension func let var guard import true false nil self in as is',
+		go: 'if else for range return break continue switch case default func var const type struct interface package import go defer true false nil',
+		rust: 'fn let mut if else for while loop match return break continue struct enum impl trait use pub mod const static true false self where',
+		hash: 'def class return if elif else unless for while do end begin rescue ensure import from as try except finally with pass lambda yield True False None and or not in is nil require include fi then esac done function local export',
+		css: '',
+		markup: '',
+		json: ''
+	};
+
+	function family (lang) {
+		lang = (lang || '').toLowerCase().replace(/^language-/, '');
+		return aliases[lang] || '';
+	}
+
+	function promoteFences () {
+		Array.prototype.forEach.call(document.querySelectorAll('code'), function (code) {
+			if (code.closest('pre'))
+				return;
+			var text = code.textContent;
+			if (text.indexOf('\n') === -1)
+				return;
+			var lines = text.replace(/^\n/, '').replace(/\n$/, '').split('\n');
+			var lang = '';
+			if (lines.length && /^[A-Za-z][\w.+#-]{0,24}$/.test(lines[0]))
+				lang = lines.shift();
+			var pre = document.createElement('pre');
+			var block = document.createElement('code');
+			if (lang)
+				block.className = 'language-' + lang.toLowerCase();
+			block.textContent = lines.join('\n');
+			pre.appendChild(block);
+			var parent = code.parentElement;
+			if (parent && parent.tagName === 'P' && parent.childNodes.length === 1)
+				parent.replaceWith(pre);
+			else
+				code.replaceWith(pre);
+		});
+	}
+
+	function escapeHtml (text) {
+		return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+	}
+
+	function highlight (text, lang) {
+		var kind = family(lang);
+		var list = (words[kind] || '').trim();
+		var keyword = list ? '\\b(?:' + list.split(/\s+/).join('|') + ')\\b' : '(?!)';
+		var line = kind === 'hash' || kind === '' ? '(?:\\/\\/|#)' : (kind === 'markup' || kind === 'css' || kind === 'json' ? '(?!)' : '\\/\\/');
+		var block = kind === 'markup' || kind === 'json' ? '(?!)' : '\\/\\*[\\s\\S]*?\\*\\/';
+		var tag = kind === 'markup' ? '<\\/?[A-Za-z][^>\\n]*>' : '(?!)';
+		var pattern = new RegExp(block + '|' + line + '[^\\n]*|' + tag + '|`(?:\\\\.|[^`\\\\])*`|"(?:\\\\.|[^"\\\\])*"|\'(?:\\\\.|[^\'\\\\])*\'|\\b\\d+(?:\\.\\d+)?\\b|' + keyword + '|[A-Za-z_][\\w]*\\s*(?=\\()', 'g');
+		var html = '';
+		var index = 0;
+		var match;
+		while ((match = pattern.exec(text))) {
+			if (match.index > index)
+				html += escapeHtml(text.slice(index, match.index));
+			var token = match[0];
+			var cls = 'tm-hl-plain';
+			if (token.charAt(0) === '<')
+				cls = 'tm-hl-keyword';
+			else if (token.charAt(0) === '/' && token.charAt(1) === '*' || token.indexOf('//') === 0 || token.charAt(0) === '#')
+				cls = 'tm-hl-comment';
+			else if (token.charAt(0) === '"' || token.charAt(0) === '\'' || token.charAt(0) === '`')
+				cls = 'tm-hl-string';
+			else if (/^\d/.test(token))
+				cls = 'tm-hl-number';
+			else if (list && new RegExp('^(?:' + list.split(/\s+/).join('|') + ')$').test(token))
+				cls = 'tm-hl-keyword';
+			else
+				cls = 'tm-hl-function';
+			html += '<span class="' + cls + '">' + escapeHtml(token) + '</span>';
+			index = match.index + token.length;
+			if (pattern.lastIndex === match.index)
+				pattern.lastIndex++;
+		}
+		html += escapeHtml(text.slice(index));
+		return html;
+	}
+
+	promoteFences();
+	Array.prototype.forEach.call(document.querySelectorAll('pre code'), function (code) {
+		var raw = code.getAttribute('data-tm-raw');
+		if (raw == null) {
+			raw = code.textContent;
+			code.setAttribute('data-tm-raw', raw);
+		}
+		var lang = '';
+		var classes = code.className.split(/\s+/);
+		for (var i = 0; i < classes.length; i++) {
+			if (classes[i].indexOf('language-') === 0)
+				lang = classes[i];
+		}
+		code.innerHTML = highlight(raw, lang);
+	});
+})();
+)JS";
+
+- (void)applyMarkdownPreviewAppearance
+{
+	if(!_markdownPreviewVisible || !self.markdownPreviewView)
+		return;
+
+	theme_ptr theme = _textView.theme;
+	NSString* background = (theme && !theme->is_transparent()) ? OakPreviewCSSColor(theme->background()) : nil;
+	NSString* foreground = theme ? OakPreviewCSSColor(theme->foreground()) : nil;
+	__block BOOL dark = theme ? theme->is_dark() : NO;
+	if(!background || !foreground)
+	{
+		NSAppearance* appearance = self.effectiveAppearance;
+		__block NSColor* systemBackground = nil;
+		__block NSColor* systemForeground = nil;
+		[appearance performAsCurrentDrawingAppearance:^{
+			systemBackground = [NSColor.textBackgroundColor colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
+			systemForeground = [NSColor.labelColor colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
+			dark = [appearance bestMatchFromAppearancesWithNames:@[ NSAppearanceNameDarkAqua, NSAppearanceNameAqua ]] == NSAppearanceNameDarkAqua;
+		}];
+		background = background ?: OakPreviewCSSColor(systemBackground.CGColor);
+		foreground = foreground ?: OakPreviewCSSColor(systemForeground.CGColor);
+	}
+	if(!background || !foreground)
+		return;
+
+	NSColor* page = nil;
+	NSColor* ink = nil;
+	if(theme && !theme->is_transparent() && theme->background())
+		page = [[NSColor colorWithCGColor:theme->background()] colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
+	if(theme && theme->foreground())
+		ink = [[NSColor colorWithCGColor:theme->foreground()] colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
+	if(!page || !ink)
+	{
+		page = dark ? NSColor.blackColor : NSColor.whiteColor;
+		ink = dark ? NSColor.whiteColor : NSColor.blackColor;
+	}
+	self.markdownPreviewView.webView.underPageBackgroundColor = page;
+
+	NSString* codeBackground = OakPreviewCSSColor([page blendedColorWithFraction:dark ? 0.14 : 0.06 ofColor:ink].CGColor);
+	NSString* comment = OakPreviewScopeColor(theme, "comment", dark ? @"rgba(148, 156, 168, 1)" : @"rgba(90, 99, 112, 1)");
+	NSString* string = OakPreviewScopeColor(theme, "string", dark ? @"rgba(186, 220, 144, 1)" : @"rgba(24, 122, 55, 1)");
+	NSString* keyword = OakPreviewScopeColor(theme, "keyword", dark ? @"rgba(214, 154, 227, 1)" : @"rgba(140, 62, 168, 1)");
+	NSString* number = OakPreviewScopeColor(theme, "constant.numeric", dark ? @"rgba(240, 184, 110, 1)" : @"rgba(160, 92, 16, 1)");
+	NSString* call = OakPreviewScopeColor(theme, "entity.name.function", dark ? @"rgba(126, 184, 246, 1)" : @"rgba(22, 92, 176, 1)");
+	NSString* font = @"ui-monospace, Menlo, monospace";
+	if(theme && !theme->font_name().empty())
+	{
+		NSString* name = [NSString stringWithUTF8String:theme->font_name().c_str()];
+		name = [name stringByReplacingOccurrencesOfString:@"\\" withString:@"\\\\"];
+		name = [name stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\""];
+		font = [NSString stringWithFormat:@"\"%@\", ui-monospace, Menlo, monospace", name];
+	}
+
+	NSString* css = [NSString stringWithFormat:@""
+		"#tm_webpreview_header { display: none !important; }"
+		"html, body, #tm_webpreview_body, #tm_webpreview_content { background: %@ !important; color: %@ !important; }"
+		"#tm_webpreview_content { font: 16px/1.55 -apple-system, BlinkMacSystemFont, sans-serif; padding: 28px 40px 64px; }"
+		"#tm_webpreview_content h1, #tm_webpreview_content h2, #tm_webpreview_content h3, #tm_webpreview_content h4 { color: %@ !important; font-weight: 600; line-height: 1.25; }"
+		"#tm_webpreview_content a { color: %@ !important; }"
+		"#tm_webpreview_content blockquote { color: %@ !important; border-left: 3px solid %@ !important; margin-left: 0; padding-left: 14px; }"
+		"#tm_webpreview_content code { font-family: %@ !important; color: %@ !important; }"
+		"#tm_webpreview_content pre { background: %@ !important; color: %@ !important; border: 0 !important; border-radius: 8px; padding: 14px 16px; overflow-x: auto; }"
+		"#tm_webpreview_content pre code { color: inherit !important; background: transparent !important; }"
+		"#tm_webpreview_content .tm-hl-comment { color: %@ !important; font-style: italic; }"
+		"#tm_webpreview_content .tm-hl-string { color: %@ !important; }"
+		"#tm_webpreview_content .tm-hl-keyword { color: %@ !important; }"
+		"#tm_webpreview_content .tm-hl-number { color: %@ !important; }"
+		"#tm_webpreview_content .tm-hl-function { color: %@ !important; }"
+		"#tm_webpreview_content table { border-collapse: collapse; }"
+		"#tm_webpreview_content th, #tm_webpreview_content td { border: 1px solid %@ !important; padding: 4px 8px; }",
+		background, foreground,
+		foreground,
+		call,
+		comment, comment,
+		font, string,
+		codeBackground, foreground,
+		comment, string, keyword, number, call,
+		comment];
+
+	NSMutableString* escaped = [css mutableCopy];
+	[escaped replaceOccurrencesOfString:@"\\" withString:@"\\\\" options:0 range:NSMakeRange(0, escaped.length)];
+	[escaped replaceOccurrencesOfString:@"\"" withString:@"\\\"" options:0 range:NSMakeRange(0, escaped.length)];
+	[escaped replaceOccurrencesOfString:@"\n" withString:@"\\n" options:0 range:NSMakeRange(0, escaped.length)];
+	NSString* script = [OakMarkdownPreviewScript stringByReplacingOccurrencesOfString:@"__THEME_CSS__" withString:[NSString stringWithFormat:@"\"%@\"", escaped]];
+	[self.markdownPreviewView.webView evaluateJavaScript:script completionHandler:nil];
 }
 
 - (IBAction)toggleMarkdownPreview:(id)sender

@@ -9,4 +9,5 @@
 @property (nonatomic, getter = isRunningCommand, readonly) BOOL runningCommand;
 @property (nonatomic, getter = isReusable) BOOL reusable;
 @property (nonatomic) BOOL disableJavaScriptAPI;
+@property (nonatomic, copy) void (^navigationFinishedHandler)(void);
 @end
