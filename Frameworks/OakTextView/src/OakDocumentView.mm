@@ -56,6 +56,8 @@ static BOOL OakDocumentViewFileTypeSupportsPreview (NSString* fileType);
 @property (nonatomic, readonly) OTVStatusBar* statusBar;
 @property (nonatomic) SymbolChooser* symbolChooser;
 @property (nonatomic) OakHTMLOutputView* markdownPreviewView;
+@property (nonatomic) WKNavigation* previewNavigation;
+@property (nonatomic) NSMutableSet<NSUUID*>* previewingDocumentIdentifiers;
 @property (nonatomic) BOOL markdownPreviewVisible;
 @property (nonatomic) NSArray* observedKeys;
 - (void)updateStyle;
@@ -296,16 +298,8 @@ static BOOL OakDocumentViewFileTypeSupportsPreview (NSString* fileType);
 	else if([aKeyPath isEqualToString:@"fileType"])
 	{
 		_statusBar.fileType = self.document.fileType;
-		if(_markdownPreviewVisible)
-		{
-			if(!OakDocumentViewFileTypeSupportsPreview(self.document.fileType))
-				[self setMarkdownPreviewVisible:NO];
-			else if(_textView.document == self.document)
-			{
-				[_statusBar setMarkdownPreviewing:YES];
-				[self runMarkdownPreview];
-			}
-		}
+		if(self.document && _textView.document == self.document)
+			[self applyPreviewForCurrentDocument];
 	}
 	else if([aKeyPath isEqualToString:@"tabSize"])
 	{
@@ -338,6 +332,8 @@ static BOOL OakDocumentViewFileTypeSupportsPreview (NSString* fileType);
 	NSArray* const documentKeys = @[ @"fileType", @"tabSize", @"softTabs" ];
 
 	OakDocument* oldDocument = self.document;
+	if(oldDocument && _markdownPreviewVisible)
+		[self stopMarkdownPreviewCommand];
 	if(oldDocument)
 	{
 		for(NSString* key in documentKeys)
@@ -377,8 +373,7 @@ static BOOL OakDocumentViewFileTypeSupportsPreview (NSString* fileType);
 	if(oldDocument)
 		[oldDocument close];
 
-	if(_markdownPreviewVisible && OakDocumentViewFileTypeSupportsPreview(self.document.fileType))
-		[self runMarkdownPreview];
+	[self applyPreviewForCurrentDocument];
 
 	if(aDocument)
 	{
@@ -615,6 +610,52 @@ static BOOL OakPreviewIdentifierMatches (NSUUID* identifier)
 	return nil;
 }
 
+- (NSMutableSet<NSUUID*>*)previewingDocumentIdentifiers
+{
+	if(!_previewingDocumentIdentifiers)
+		_previewingDocumentIdentifiers = [NSMutableSet set];
+	return _previewingDocumentIdentifiers;
+}
+
+- (BOOL)isPreviewingDocument:(OakDocument*)document
+{
+	return document.identifier && [self.previewingDocumentIdentifiers containsObject:document.identifier];
+}
+
+- (void)setPreviewing:(BOOL)flag forDocument:(OakDocument*)document
+{
+	if(!document.identifier)
+		return;
+	if(flag)
+		[self.previewingDocumentIdentifiers addObject:document.identifier];
+	else
+		[self.previewingDocumentIdentifiers removeObject:document.identifier];
+}
+
+- (void)applyPreviewForCurrentDocument
+{
+	BOOL supports = OakDocumentViewFileTypeSupportsPreview(self.document.fileType);
+	if(!supports)
+		[self setPreviewing:NO forDocument:self.document];
+
+	BOOL wantsPreview = supports && [self isPreviewingDocument:self.document];
+	if(wantsPreview)
+	{
+		if(_markdownPreviewVisible)
+			[self runMarkdownPreview];
+		else
+			[self setMarkdownPreviewVisible:YES];
+	}
+	else if(_markdownPreviewVisible)
+	{
+		[self setMarkdownPreviewVisible:NO];
+	}
+	else
+	{
+		[_statusBar setMarkdownPreviewing:NO];
+	}
+}
+
 - (void)stopPreviewCommandWithUUID:(NSString*)uuidString
 {
 	NSUUID* uuid = [[NSUUID alloc] initWithUUIDString:uuidString];
@@ -631,8 +672,15 @@ static BOOL OakPreviewIdentifierMatches (NSUUID* identifier)
 	[self stopPreviewCommandWithUUID:OakHTMLPreviewCommandUUID];
 }
 
+- (void)preparePreviewForNewContent
+{
+	self.previewNavigation = nil;
+	self.markdownPreviewView.webView.hidden = YES;
+}
+
 - (void)runMarkdownPreview
 {
+	[self preparePreviewForNewContent];
 	[self stopMarkdownPreviewCommand];
 	NSString* uuidString = [self previewCommandUUID];
 	if(!uuidString)
@@ -663,13 +711,20 @@ static BOOL OakPreviewIdentifierMatches (NSUUID* identifier)
 		{
 			self.markdownPreviewView = [[OakHTMLOutputView alloc] initWithFrame:NSZeroRect];
 			__weak OakDocumentView* weakSelf = self;
-			self.markdownPreviewView.navigationFinishedHandler = ^{
-				[weakSelf applyMarkdownPreviewAppearance];
+			self.markdownPreviewView.navigationStartedHandler = ^(WKNavigation* navigation){
+				weakSelf.previewNavigation = navigation;
+			};
+			self.markdownPreviewView.navigationFinishedHandler = ^(WKNavigation* navigation){
+				OakDocumentView* view = weakSelf;
+				if(!view || !view.markdownPreviewVisible || navigation != view.previewNavigation)
+					return;
+				view.previewNavigation = nil;
+				view.markdownPreviewView.webView.hidden = NO;
+				[view applyMarkdownPreviewAppearance];
 			};
 		}
 		if(!self.markdownPreviewView.superview)
 			OakAddAutoLayoutViewsToSuperview(@[ self.markdownPreviewView ], self);
-		[self applyMarkdownPreviewAppearance];
 		[_statusBar setMarkdownPreviewing:YES];
 		[self setNeedsUpdateConstraints:YES];
 		[self runMarkdownPreview];
@@ -919,7 +974,10 @@ static NSString* const OakMarkdownPreviewScript = @R"JS(
 
 - (IBAction)toggleMarkdownPreview:(id)sender
 {
-	[self setMarkdownPreviewVisible:!_markdownPreviewVisible];
+	if(!self.document || !OakDocumentViewFileTypeSupportsPreview(self.document.fileType))
+		return;
+	[self setPreviewing:![self isPreviewingDocument:self.document] forDocument:self.document];
+	[self applyPreviewForCurrentDocument];
 }
 
 - (OakHTMLOutputView*)htmlOutputView:(BOOL)createFlag forIdentifier:(NSUUID*)identifier
@@ -1319,8 +1377,11 @@ static NSString* const OakMarkdownPreviewScript = @R"JS(
 
 - (void)documentWillClose:(NSNotification*)notification
 {
-	[LSPManager.sharedManager documentWillClose:notification.object];
-	[[CopilotManager sharedManager] documentWillClose:notification.object];
+	OakDocument* document = notification.object;
+	if(document.identifier)
+		[self.previewingDocumentIdentifiers removeObject:document.identifier];
+	[LSPManager.sharedManager documentWillClose:document];
+	[[CopilotManager sharedManager] documentWillClose:document];
 }
 
 // =======================

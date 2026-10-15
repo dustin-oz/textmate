@@ -19,6 +19,7 @@
 @property (nonatomic) std::map<std::string, std::string> environment;
 @property (nonatomic) NSArray* pendingScrollPosition;
 @property (nonatomic, getter = isVisible) BOOL visible;
+@property (nonatomic) BOOL suppressNavigationFinishedHandler;
 @end
 
 @implementation OakHTMLOutputView
@@ -159,6 +160,8 @@
 {
 	self.statusBar.busy = YES;
 	[self setUpdatesProgress:!self.isRunningCommand];
+	if(self.navigationStartedHandler)
+		self.navigationStartedHandler(navigation);
 }
 
 - (void)webView:(WKWebView*)webView didFinishNavigation:(WKNavigation*)navigation
@@ -188,22 +191,31 @@
 	}
 
 	[super webView:webView didFinishNavigation:navigation];
-	if(self.navigationFinishedHandler)
-		self.navigationFinishedHandler();
+	if(!self.suppressNavigationFinishedHandler && self.navigationFinishedHandler)
+		self.navigationFinishedHandler(navigation);
 }
 
 - (void)webView:(WKWebView*)webView didFailProvisionalNavigation:(WKNavigation*)navigation withError:(NSError*)error
 {
 	self.runningCommand = NO;
 	self.autoScrollHelper = nil;
+	// Stopping a preview when leaving a tab cancels the load. That is not a page error.
+	if([error.domain isEqualToString:NSURLErrorDomain] && error.code == NSURLErrorCancelled)
+		return;
+	self.suppressNavigationFinishedHandler = YES;
 	[super webView:webView didFailProvisionalNavigation:navigation withError:error];
+	self.suppressNavigationFinishedHandler = NO;
 }
 
 - (void)webView:(WKWebView*)webView didFailNavigation:(WKNavigation*)navigation withError:(NSError*)error
 {
 	self.runningCommand = NO;
 	self.autoScrollHelper = nil;
+	if([error.domain isEqualToString:NSURLErrorDomain] && error.code == NSURLErrorCancelled)
+		return;
+	self.suppressNavigationFinishedHandler = YES;
 	[super webView:webView didFailNavigation:navigation withError:error];
+	self.suppressNavigationFinishedHandler = NO;
 }
 
 // =========================================
