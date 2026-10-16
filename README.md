@@ -2,6 +2,40 @@
 
 This is a personal fork of TextMate. Build it from source. There is no Homebrew cask and no downloadable release.
 
+## What's new in this fork
+
+### Project sidebar
+
+A full-height column on the left of every document window. The tab bar starts at its right edge. The older File Browser is unchanged.
+
+- Add an existing folder, or create an empty folder or file. A new item goes in the selected folder, with its name ready to type. With nothing selected, a save panel asks for the name and location. A new folder outside the sidebar is added to the list. A new file outside the sidebar becomes its own row and opens.
+- The list shows folders and files TextMate can open as text. Hidden files, images, other binaries, `node_modules`, and `Pods` stay out.
+- Click a file to open it in the current window. Option-click replaces the other tabs.
+- Drag a file or folder from Finder onto empty space to add it. A file opens in a tab and stays where it is on disk. Drop onto a folder to put the item inside that folder. Option copies, and a drop from another disk copies.
+- Drag a top-level project up or down to reorder it. A gap shows the new spot. Projects cannot be dropped inside each other, and folders inside a project cannot be reordered. Drag a loose file onto a folder to move it there.
+- Switching tabs expands the sidebar to that file and selects it, scrolling it to the middle when it is off screen. A file that is not in the sidebar is left alone.
+- Right-click a project, folder, or file and choose Reveal in Finder. Remove a sidebar folder from the context menu, or select it and press Delete.
+- A sidebar button hides the column. The same button then sits at the left of the tab bar and shows it again. That choice is remembered and shared by every window. The Projects label sits on its own line above the buttons.
+- Drag the sidebar’s right edge to resize it. The folder list and the width are saved and shared by every window.
+
+### Preview
+
+- Markdown and HTML files get a Preview button on the status bar, next to the language presets. Edit switches back to the source.
+- Markdown uses TextMate’s existing preview command and shows the result in the editor area. Colors come from the current editor theme, including a dark theme. Code blocks use the theme’s comment, string, keyword, number, and function colors. If the theme has no background, the preview follows the system appearance.
+- HTML renders in the editor area with TextMate’s existing HTML preview and keeps the page’s own styles.
+- Preview is remembered per tab. Switching tabs, or opening Preview again, keeps the previous page hidden until the new preview has loaded. Leaving Markdown or HTML returns to the editor.
+- The Markdown language button only sets the file type.
+
+### Tabs and windows
+
+- Right-click a tab and choose Reveal in Finder. A tab that has never been saved stays disabled.
+- New Tab is Command-Option-N.
+- Closing the last tab closes the window. The next one opens at the last size you left it. A window saved as only the title bar and status bar opens at a wide default instead, including when it has no tabs yet. That default can be resized from any corner.
+
+### Status bar
+
+- Presets for plain text, Markdown, and HTML.
+
 ## Install
 
 You need macOS 14.0 or later, a full Xcode install, [ninja][], and [cmake][] 3.21 or newer.
